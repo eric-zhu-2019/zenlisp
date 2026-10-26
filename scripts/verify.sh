@@ -7,8 +7,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
 extra=()
-# The tests' Lisps load no plugins of the user's, and move none of them.
-export ZENLISP_CONFIG_DIR=$(mktemp -d)
+# The tests' Lisps use none of the user's folders: no plugins, settings or
+# saved conversations of theirs are read, changed or moved.
+export ZENLISP_CONFIG_DIR=$(mktemp -d) ZENLISP_DATA_DIR=$(mktemp -d)
 [ "${1:-}" = "--network" ] && extra=(--include-ignored)
 
 echo "== rust"
