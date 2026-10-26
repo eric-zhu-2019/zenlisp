@@ -58,8 +58,9 @@ The package is `zenlisp-plugin`. A plugin gives it a local nickname.
 ### Commands
 
 `define-command` adds a palette entry, and a key when `:key` gives one in
-CodeMirror's notation, such as `"Mod-Alt-j"` for ⌥⌘J. The body gets the
-editor's state as a context:
+CodeMirror's notation, such as `"Mod-Alt-j"` for ⌥⌘J. `:emacs` gives a key
+sequence in Emacs's notation, such as `"C-c t"`, which works with Emacs keys
+on. The body gets the editor's state as a context:
 
 | Accessor | Value |
 | --- | --- |
@@ -83,6 +84,10 @@ The body asks for changes, and the editor makes them when it returns:
 What the body prints goes to the REPL. Offsets count characters as Lisp
 does. The editor counts UTF-16 code units, so text with characters outside
 the Basic Multilingual Plane, such as emoji, shifts offsets after them.
+
+`examples/plugins/insert-datetime.lisp` is a complete plugin. It inserts
+the date and time at the cursor on C-c t, and a setting chooses whether it
+inserts the time too. Copy it into the plugins folder and reload.
 
 ### Checks
 

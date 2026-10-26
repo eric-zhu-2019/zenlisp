@@ -50,7 +50,7 @@ export function commands(openNew: () => void): Command[] {
     ...(usePlugins.getState().manifest?.commands ?? []).map((c) => ({
       id: `plugin:${c.id}`,
       label: c.title,
-      keys: c.key ? displayKey(c.key) : undefined,
+      keys: c.key ? displayKey(c.key) : (c.emacs ?? undefined),
       run: () => void runPluginCommand(c.id),
     })),
     ...(usePlugins.getState().manifest ? [{ id: "reload-plugins", label: "Reload Plugins", run: () => void reloadPlugins() }] : []),

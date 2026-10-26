@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const shots = (page: Page, name: string) => page.screenshot({ path: `e2e/.results/${name}.png` });
 
@@ -1603,6 +1603,7 @@ test("a plugin adds a command with a key, a setting, a save hook and a REPL comm
   await page.keyboard.press("Meta+,");
   await settings.getByRole("button", { name: "Plugins", exact: true }).click();
   const plugin = join((await settings.getByTestId("plugins-dir").textContent())!, "demo.lisp");
+  const example = join(dirname(plugin), "insert-datetime.lisp");
   writeFileSync(
     plugin,
     `(defpackage #:demo (:use #:cl) (:local-nicknames (#:zp #:zenlisp-plugin)))
@@ -1652,11 +1653,25 @@ test("a plugin adds a command with a key, a setting, a save hook and a REPL comm
     await expect.poll(() => readFileSync(main, "utf8"), { message: "the before-save hook edits what is written" }).toContain(";; done");
     await expect(editor.locator(".cm-content"), "and the editor shows the edit").toContainText(";; done");
 
+    copyFileSync("examples/plugins/insert-datetime.lisp", example);
+    await page.keyboard.press("Meta+Shift+P");
+    await page.getByPlaceholder("Type a command…").fill("Reload Plugins");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Meta+Shift+P");
+    await page.getByPlaceholder("Type a command…").fill("Insert Date and Time");
+    await expect(page.locator(".palette"), "the example plugin's command shows its Emacs keys").toContainText("C-c t");
+    await page.keyboard.press("Escape");
+    await editor.locator(".cm-line", { hasText: ";; done" }).click();
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("t");
+    await expect(editor.locator(".cm-line").first(), "C-c t inserts the date and time").toHaveText(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/);
+
     await page.locator(".panel-tab", { hasText: "REPL" }).click();
     await replEval(page, ",hello");
     await expect(page.locator(".repl-buffer"), "a REPL hook handles its own command").toContainText("hello from a plugin");
   } finally {
     rmSync(plugin, { force: true });
+    rmSync(example, { force: true });
   }
 });
 

@@ -29,7 +29,7 @@
 ;;; What plugins define. Each entry names its owner, so a reload replaces a
 ;;; plugin's definitions without touching the others.
 
-(defstruct command id title key owner function)
+(defstruct command id title key emacs owner function)
 (defstruct check name owner function)
 (defstruct hook event owner function)
 (defstruct setting-spec symbol title type default choices doc owner)
@@ -40,19 +40,20 @@
 (defvar *setting-specs* '())
 (defvar *setting-values* (make-hash-table :test #'equal) "Values set in Settings, by setting key.")
 
-(defun register-command (name title key function)
+(defun register-command (name title key emacs function)
   (let ((id (format nil "~(~a/~a~)" (owner) name)))
     (setf *commands* (append (remove id *commands* :key #'command-id :test #'string=)
                              (list (make-command :id id :title (or title (string-capitalize (substitute #\Space #\- (string name))))
-                                                 :key key :owner (owner) :function function))))
+                                                 :key key :emacs emacs :owner (owner) :function function))))
     id))
 
-(defmacro define-command (name (context) (&key title key) &body body)
+(defmacro define-command (name (context) (&key title key emacs) &body body)
   "Adds a command to the palette, and to KEY when given, in CodeMirror's
-notation such as \"Mod-Alt-t\". BODY runs with CONTEXT bound to the editor's
-state, and asks for changes by calling REPLACE-RANGE, INSERT, OPEN-FILE,
-MESSAGE and REPL-PRINT."
-  `(register-command ',name ,title ,key (lambda (,context) (declare (ignorable ,context)) ,@body)))
+notation such as \"Mod-Alt-t\". EMACS is a key sequence for Emacs keys, in
+Emacs's notation such as \"C-c t\". BODY runs with CONTEXT bound to the
+editor's state, and asks for changes by calling REPLACE-RANGE, INSERT,
+OPEN-FILE, MESSAGE and REPL-PRINT."
+  `(register-command ',name ,title ,key ,emacs (lambda (,context) (declare (ignorable ,context)) ,@body)))
 
 (defun register-check (name function)
   (setf *checks* (append (remove-if (lambda (c) (and (eq (check-name c) name) (equal (check-owner c) (owner)))) *checks*)
@@ -271,7 +272,8 @@ or :CHOICE, which picks one of CHOICES, a list of strings. SETTING reads it."
                                            :error (or (plugin-error p) :null)))
               :commands (loop for c in *commands*
                               collect (list :obj :id (command-id c) :title (command-title c)
-                                            :key (or (command-key c) :null) :plugin (command-owner c)))
+                                            :key (or (command-key c) :null) :emacs (or (command-emacs c) :null)
+                                            :plugin (command-owner c)))
               :settings (loop for s in *setting-specs*
                               collect (list :obj :id (setting-key (setting-spec-symbol s)) :plugin (setting-spec-owner s)
                                             :title (setting-spec-title s) :type (setting-spec-type s)

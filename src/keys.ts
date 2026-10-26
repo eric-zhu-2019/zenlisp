@@ -288,9 +288,16 @@ export class EmacsChords {
   }
 }
 
+/** Plugin commands with an Emacs key sequence, as bindings the chords follow. */
+function pluginChords(): Binding[] {
+  return (usePlugins.getState().manifest?.commands ?? [])
+    .filter((c) => c.emacs)
+    .map((c) => ({ id: `plugin:${c.id}`, label: c.title, category: "Tools", emacs: c.emacs!, scope: "window", run: () => void runPluginCommand(c.id) }));
+}
+
 /** Emacs key sequences in the main editor, caught before CodeMirror and Vim. */
 export function emacsKeyHandler() {
-  const chords = new EmacsChords();
+  const chords = new EmacsChords(() => [...bindings, ...pluginChords()]);
   return (e: KeyboardEvent) => {
     if (!useSettings.getState().emacs) return;
     const view = activeEditor.view;

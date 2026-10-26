@@ -9,7 +9,7 @@ import { activeEditor, bufferPackage } from "./editor/commands";
 import { appendTranscript, get, set } from "./store";
 
 export type PluginInfo = { name: string; path: string; error: string | null };
-export type PluginCommand = { id: string; title: string; key: string | null; plugin: string };
+export type PluginCommand = { id: string; title: string; key: string | null; emacs: string | null; plugin: string };
 export type PluginSetting = {
   id: string;
   plugin: string;
