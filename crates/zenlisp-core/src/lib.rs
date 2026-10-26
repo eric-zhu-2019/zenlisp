@@ -1,0 +1,13 @@
+pub mod assistant;
+pub mod docs;
+pub mod files;
+pub mod git;
+pub mod mcp;
+pub mod ops;
+pub mod project;
+pub mod search;
+pub mod session;
+pub mod sexp;
+pub mod swank;
+pub mod tools;
+pub mod workbench;

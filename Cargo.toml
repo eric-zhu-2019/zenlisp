@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["src-tauri", "crates/zenlisp-core", "crates/zenlisp-dev"]
+exclude = ["crates/parinfer-wasm"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "process", "sync", "time", "fs"] }
+thiserror = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+# Stripping proc-macro dylibs corrupts them with this macOS toolchain
+# ("mis-aligned LINKEDIT string pool"), so strip only the shipped binary.
+[profile.release.build-override]
+strip = false

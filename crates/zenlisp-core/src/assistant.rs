@@ -1,0 +1,500 @@
+use crate::tools;
+use crate::workbench::Workbench;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::task::AbortHandle;
+use ts_rs::TS;
+
+const MODEL: &str = "claude-opus-5-5";
+const API_VERSION: &str = "2026-10-21";
+const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
+const OAUTH_BETA: &str = "oauth-2025-04-20";
+const MAX_TOKENS: u32 = 64000;
+const MAX_TOOL_ROUNDS: usize = 40;
+
+const SYSTEM: &str = "You are the assistant inside ZenLisp, a Common Lisp IDE on SBCL. You work in the user's \
+running Lisp image through tools, while the user watches and edits the same image. Inspect before you change: read \
+files, describe symbols and evaluate small experiments to ground your answers. Define or fix code with compile_form, \
+so compiler notes come back to you. When the debugger opens, read it with debugger_state and choose a restart with \
+invoke_restart rather than leaving it open. To fix code in the user's files, change the file with edit_file, then \
+compile the changed form with compile_form so its notes come back to you. When you only propose code, put it in a \
+fenced ```lisp block, starting with a comment line naming the file, so the user can insert it. Keep answers short and \
+concrete.";
+
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum AssistantEvent {
+    TurnStarted,
+    #[serde(rename_all = "camelCase")]
+    Text { text: String },
+    #[serde(rename_all = "camelCase")]
+    Thinking { text: String },
+    #[serde(rename_all = "camelCase")]
+    ToolStarted { id: String, name: String, input: String },
+    #[serde(rename_all = "camelCase")]
+    ToolFinished { id: String, ok: bool, output: String },
+    #[serde(rename_all = "camelCase")]
+    Error { message: String },
+    #[serde(rename_all = "camelCase")]
+    TurnFinished { stop_reason: String },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EditorContext {
+    pub file: Option<String>,
+    pub package: Option<String>,
+    pub form: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AssistantStatus {
+    pub configured: bool,
+    pub source: Option<CredentialSource>,
+    pub busy: bool,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum CredentialSource {
+    Settings,
+    Environment,
+    Ant,
+}
+
+#[derive(Debug, Clone)]
+enum Credential {
+    ApiKey(String),
+    OAuth(String),
+}
+
+pub struct Assistant {
+    http: reqwest::Client,
+    key_file: PathBuf,
+    base_url: String,
+    history: Mutex<Vec<Value>>,
+    running: Mutex<Option<AbortHandle>>,
+}
+
+type Emit = Arc<dyn Fn(AssistantEvent) + Send + Sync>;
+
+impl Assistant {
+    pub fn new(data_dir: &Path) -> Assistant {
+        Assistant {
+            http: reqwest::Client::new(),
+            key_file: data_dir.join("anthropic-api-key"),
+            base_url: std::env::var("ANTHROPIC_BASE_URL").unwrap_or_else(|_| "https://api.anthropic.com".into()),
+            history: Mutex::new(Vec::new()),
+            running: Mutex::new(None),
+        }
+    }
+
+    async fn credential(&self) -> Option<(Credential, CredentialSource)> {
+        if let Ok(k) = std::fs::read_to_string(&self.key_file) {
+            if !k.trim().is_empty() {
+                return Some((Credential::ApiKey(k.trim().into()), CredentialSource::Settings));
+            }
+        }
+        if let Ok(k) = std::env::var("ANTHROPIC_API_KEY") {
+            if !k.is_empty() {
+                return Some((Credential::ApiKey(k), CredentialSource::Environment));
+            }
+        }
+        if let Ok(t) = std::env::var("ANTHROPIC_AUTH_TOKEN") {
+            if !t.is_empty() {
+                return Some((Credential::OAuth(t), CredentialSource::Environment));
+            }
+        }
+        let out = tokio::process::Command::new("ant")
+            .args(["auth", "print-credentials", "--access-token"])
+            .output()
+            .await
+            .ok()?;
+        let token = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (out.status.success() && !token.is_empty()).then_some((Credential::OAuth(token), CredentialSource::Ant))
+    }
+
+    pub async fn status(&self) -> AssistantStatus {
+        let cred = self.credential().await;
+        AssistantStatus {
+            configured: cred.is_some(),
+            source: cred.map(|(_, s)| s),
+            busy: self.running.lock().await.as_ref().is_some_and(|h| !h.is_finished()),
+            model: MODEL.into(),
+        }
+    }
+
+    pub fn set_key(&self, key: &str) -> std::io::Result<()> {
+        if let Some(dir) = self.key_file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&self.key_file, key.trim())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&self.key_file, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    }
+
+    pub async fn reset(&self) {
+        self.cancel().await;
+        self.history.lock().await.clear();
+    }
+
+    pub async fn cancel(&self) {
+        if let Some(h) = self.running.lock().await.take() {
+            h.abort();
+        }
+    }
+
+    /// Starts a turn in the background. Events stream through `emit`.
+    pub async fn send(self: &Arc<Self>, wb: Arc<Workbench>, text: String, context: Option<EditorContext>, emit: Emit) -> Result<(), String> {
+        let mut running = self.running.lock().await;
+        if running.as_ref().is_some_and(|h| !h.is_finished()) {
+            return Err("the assistant is still answering".into());
+        }
+        let me = self.clone();
+        let task = tokio::spawn(async move {
+            emit(AssistantEvent::TurnStarted);
+            let stop_reason = match me.turn(&wb, user_message(&text, context.as_ref()), &emit).await {
+                Ok(reason) => reason,
+                Err(message) => {
+                    emit(AssistantEvent::Error { message });
+                    "error".into()
+                }
+            };
+            emit(AssistantEvent::TurnFinished { stop_reason });
+        });
+        *running = Some(task.abort_handle());
+        Ok(())
+    }
+
+    async fn turn(&self, wb: &Arc<Workbench>, user: Value, emit: &Emit) -> Result<String, String> {
+        let (cred, _) = self
+            .credential()
+            .await
+            .ok_or("No Anthropic credentials. Add an API key in the assistant settings, set ANTHROPIC_API_KEY, or run `ant auth login`.")?;
+        // History only grows: we append the user's message and each response
+        // whole, thinking blocks included, so cached prefixes stay valid.
+        self.history.lock().await.push(user);
+        for _ in 0..MAX_TOOL_ROUNDS {
+            let messages = self.history.lock().await.clone();
+            let reply = self.stream_message(&cred, &messages, emit).await?;
+            match reply.stop_reason.as_str() {
+                // A declined turn may stop mid-output, so its partial content is dropped.
+                "refusal" => return Err(format!("Claude declined this request{}", reply.refusal_note())),
+                _ => self.history.lock().await.push(json!({ "role": "assistant", "content": reply.content })),
+            }
+            let calls = reply.tool_uses();
+            if calls.is_empty() {
+                return Ok(reply.stop_reason);
+            }
+            let truncated = reply.stop_reason == "max_tokens";
+            let results = futures::future::join_all(calls.into_iter().map(|call| run_tool(wb, call, truncated, emit))).await;
+            self.history.lock().await.push(json!({ "role": "user", "content": results }));
+            if truncated {
+                return Err("The response hit the output limit in the middle of a tool call.".into());
+            }
+        }
+        Err(format!("Stopped after {MAX_TOOL_ROUNDS} rounds of tool calls."))
+    }
+
+    fn body(&self, messages: &[Value]) -> Value {
+        let tools: Vec<Value> = tools::specs()
+            .into_iter()
+            .map(|t| {
+                json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": t.input_schema,
+                    "eager_input_streaming": true,
+                })
+            })
+            .collect();
+        json!({
+            "model": MODEL,
+            "max_tokens": MAX_TOKENS,
+            "stream": true,
+            "system": [{ "type": "text", "text": SYSTEM, "cache_control": { "type": "ephemeral" } }],
+            "tools": tools,
+            "messages": messages,
+            "thinking": { "type": "adaptive", "display": "summarized" },
+            "output_config": { "effort": "high" },
+            "fallbacks": "default",
+            "cache_control": { "type": "ephemeral" },
+        })
+    }
+
+    async fn stream_message(&self, cred: &Credential, messages: &[Value], emit: &Emit) -> Result<Reply, String> {
+        let mut betas = vec![FALLBACK_BETA];
+        let mut req = self
+            .http
+            .post(format!("{}/v1/messages", self.base_url))
+            .header("content-type", "application/json")
+            .header("anthropic-version", API_VERSION);
+        match cred {
+            Credential::ApiKey(k) => req = req.header("x-api-key", k),
+            Credential::OAuth(t) => {
+                req = req.header("authorization", format!("Bearer {t}"));
+                betas.push(OAUTH_BETA);
+            }
+        }
+        let resp = req
+            .header("anthropic-beta", betas.join(","))
+            .json(&self.body(messages))
+            .send()
+            .await
+            .map_err(|e| format!("could not reach the Anthropic API: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|v| v.pointer("/error/message").and_then(Value::as_str).map(String::from))
+                .unwrap_or(body);
+            return Err(format!("Anthropic API error {status}: {message}"));
+        }
+        let mut stream = resp.bytes_stream();
+        let mut sse = SseBuffer::default();
+        let mut reply = Reply::default();
+        use futures::StreamExt;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("stream interrupted: {e}"))?;
+            for data in sse.push(&chunk) {
+                let Ok(event) = serde_json::from_str::<Value>(&data) else { continue };
+                reply.apply(&event, emit)?;
+            }
+        }
+        Ok(reply)
+    }
+}
+
+fn user_message(text: &str, context: Option<&EditorContext>) -> Value {
+    let mut content = Vec::new();
+    if let Some(c) = context {
+        let mut note = String::from("Editor context:");
+        if let Some(f) = &c.file {
+            note.push_str(&format!("\nFile: {f}"));
+        }
+        if let Some(p) = &c.package {
+            note.push_str(&format!("\nPackage: {p}"));
+        }
+        if let Some(form) = &c.form {
+            note.push_str(&format!("\nForm at the cursor:\n```lisp\n{form}\n```"));
+        }
+        content.push(json!({ "type": "text", "text": note }));
+    }
+    content.push(json!({ "type": "text", "text": text }));
+    json!({ "role": "user", "content": content })
+}
+
+async fn run_tool(wb: &Arc<Workbench>, call: ToolCall, truncated: bool, emit: &Emit) -> Value {
+    emit(AssistantEvent::ToolStarted { id: call.id.clone(), name: call.name.clone(), input: call.raw.clone() });
+    let result = if truncated {
+        Err("The tool input was cut off by the output limit, so the tool did not run.".to_string())
+    } else {
+        match &call.input {
+            Ok(args) => tools::call(wb, &call.name, args.clone()).await,
+            Err(_) => Err(json!({ "INVALID_JSON": call.raw }).to_string()),
+        }
+    };
+    let (ok, output) = match result {
+        Ok(o) => (true, o),
+        Err(e) => (false, e),
+    };
+    emit(AssistantEvent::ToolFinished { id: call.id.clone(), ok, output: output.clone() });
+    json!({ "type": "tool_result", "tool_use_id": call.id, "content": output, "is_error": !ok })
+}
+
+struct ToolCall {
+    id: String,
+    name: String,
+    raw: String,
+    input: Result<Value, String>,
+}
+
+#[derive(Default)]
+struct Reply {
+    content: Vec<Value>,
+    partial_json: Vec<String>,
+    stop_reason: String,
+    stop_details: Option<Value>,
+}
+
+impl Reply {
+    /// Folds one SSE event in. An `error` event fails the stream; an event
+    /// with an unknown shape is skipped, as the API may add new ones.
+    fn apply(&mut self, event: &Value, emit: &Emit) -> Result<(), String> {
+        if event["type"] == "error" {
+            return Err(event["error"]["message"].as_str().unwrap_or("stream error").to_string());
+        }
+        self.fold(event, emit);
+        Ok(())
+    }
+
+    fn fold(&mut self, event: &Value, emit: &Emit) -> Option<()> {
+        match event["type"].as_str()? {
+            "content_block_start" => {
+                let i = event["index"].as_u64()? as usize;
+                while self.content.len() <= i {
+                    self.content.push(Value::Null);
+                    self.partial_json.push(String::new());
+                }
+                self.content[i] = event["content_block"].clone();
+            }
+            "content_block_delta" => {
+                let i = event["index"].as_u64()? as usize;
+                let delta = &event["delta"];
+                let block = self.content.get_mut(i)?;
+                match delta["type"].as_str()? {
+                    "text_delta" => {
+                        let t = delta["text"].as_str().unwrap_or_default();
+                        append(block, "text", t);
+                        emit(AssistantEvent::Text { text: t.into() });
+                    }
+                    "thinking_delta" => {
+                        let t = delta["thinking"].as_str().unwrap_or_default();
+                        append(block, "thinking", t);
+                        emit(AssistantEvent::Thinking { text: t.into() });
+                    }
+                    "signature_delta" => append(block, "signature", delta["signature"].as_str().unwrap_or_default()),
+                    "input_json_delta" => self.partial_json[i].push_str(delta["partial_json"].as_str().unwrap_or_default()),
+                    "citations_delta" => {
+                        if let Some(list) = block.get_mut("citations").and_then(Value::as_array_mut) {
+                            list.push(delta["citation"].clone());
+                        } else {
+                            block["citations"] = json!([delta["citation"].clone()]);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            "content_block_stop" => {
+                let i = event["index"].as_u64()? as usize;
+                let block = self.content.get_mut(i)?;
+                if block["type"] == "tool_use" {
+                    let raw = &self.partial_json[i];
+                    block["input"] = if raw.trim().is_empty() {
+                        json!({})
+                    } else {
+                        serde_json::from_str(raw).unwrap_or_else(|_| json!({}))
+                    };
+                }
+            }
+            "message_delta" => {
+                if let Some(r) = event["delta"]["stop_reason"].as_str() {
+                    self.stop_reason = r.into();
+                }
+                if !event["delta"]["stop_details"].is_null() {
+                    self.stop_details = Some(event["delta"]["stop_details"].clone());
+                }
+            }
+            _ => {}
+        }
+        Some(())
+    }
+
+    fn tool_uses(&self) -> Vec<ToolCall> {
+        self.content
+            .iter()
+            .zip(&self.partial_json)
+            .filter(|(b, _)| b["type"] == "tool_use")
+            .map(|(b, raw)| {
+                let raw = if raw.trim().is_empty() { "{}".to_string() } else { raw.clone() };
+                ToolCall {
+                    id: b["id"].as_str().unwrap_or_default().into(),
+                    name: b["name"].as_str().unwrap_or_default().into(),
+                    input: serde_json::from_str::<Value>(&raw).map_err(|e| e.to_string()).and_then(|v| {
+                        if v.is_object() { Ok(v) } else { Err("tool input is not an object".into()) }
+                    }),
+                    raw,
+                }
+            })
+            .collect()
+    }
+
+    fn refusal_note(&self) -> String {
+        match self.stop_details.as_ref().and_then(|d| d["explanation"].as_str()) {
+            Some(e) => format!(": {e}"),
+            None => ".".into(),
+        }
+    }
+}
+
+fn append(block: &mut Value, field: &str, text: &str) {
+    let current = block[field].as_str().unwrap_or_default().to_string();
+    block[field] = Value::String(current + text);
+}
+
+#[derive(Default)]
+struct SseBuffer {
+    pending: String,
+}
+
+impl SseBuffer {
+    fn push(&mut self, bytes: &[u8]) -> Vec<String> {
+        self.pending.push_str(&String::from_utf8_lossy(bytes).replace("\r\n", "\n"));
+        let mut out = Vec::new();
+        while let Some(end) = self.pending.find("\n\n") {
+            let frame: String = self.pending.drain(..end + 2).collect();
+            let data: Vec<&str> = frame.lines().filter_map(|l| l.strip_prefix("data:")).map(str::trim_start).collect();
+            if !data.is_empty() {
+                out.push(data.join("\n"));
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sse_frames_split_across_chunks() {
+        let mut b = SseBuffer::default();
+        assert!(b.push(b"event: a\ndata: {\"x\"").is_empty());
+        assert_eq!(b.push(b":1}\n\nevent: b\ndata: 2\n\n"), vec!["{\"x\":1}".to_string(), "2".to_string()]);
+    }
+
+    #[test]
+    fn accumulates_blocks_like_an_unstreamed_reply() {
+        let emit: Emit = Arc::new(|_| {});
+        let mut r = Reply::default();
+        for e in [
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}),
+            json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"eval","input":{}}}),
+            json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"form\":"}}),
+            json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"(+ 1 2)\"}"}}),
+            json!({"type":"content_block_stop","index":1}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}}),
+        ] {
+            assert!(r.apply(&e, &emit).is_ok());
+        }
+        assert_eq!(r.content[0], json!({"type":"thinking","thinking":"hmm","signature":"sig"}));
+        assert_eq!(r.content[1]["input"], json!({"form":"(+ 1 2)"}));
+        let calls = r.tool_uses();
+        assert_eq!(calls[0].input, Ok(json!({"form":"(+ 1 2)"})));
+    }
+
+    #[test]
+    fn invalid_tool_json_is_reported_not_run() {
+        let emit: Emit = Arc::new(|_| {});
+        let mut r = Reply::default();
+        r.apply(&json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t","name":"eval","input":{}}}), &emit).unwrap();
+        r.apply(&json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"form\": \"(a"}}), &emit).unwrap();
+        assert!(r.tool_uses()[0].input.is_err());
+    }
+}

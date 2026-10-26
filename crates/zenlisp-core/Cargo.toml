@@ -1,0 +1,24 @@
+[package]
+name = "zenlisp-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+ts-rs = { version = "12", features = ["serde-json-impl"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls"] }
+futures = "0.3"
+notify = "8"
+ignore = "0.4"
+grep-searcher = "0.1"
+grep-regex = "0.1"
+grep-matcher = "0.1"
+trash = "5"
+rmcp = { version = "3.7", default-features = false, features = ["server", "transport-streamable-http-server"] }
+
+[dev-dependencies]
+reqwest = { version = "0.13", default-features = false }

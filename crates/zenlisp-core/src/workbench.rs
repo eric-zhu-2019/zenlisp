@@ -1,0 +1,812 @@
+use crate::assistant::{Assistant, AssistantEvent, AssistantStatus, EditorContext};
+use crate::files;
+use crate::search;
+use crate::ops::{Op, Reply};
+use crate::project::{self, Project};
+use crate::session::{Session, SessionConfig};
+use crate::sexp::Sexp;
+use crate::swank::{Debugger, Event, Thread};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::{Mutex, broadcast};
+use ts_rs::TS;
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum Request {
+    Lisp { op: Op },
+    StartSession,
+    RestartSession,
+    Status,
+    #[serde(rename_all = "camelCase")]
+    OpenProject { root: String },
+    #[serde(rename_all = "camelCase")]
+    NewProject { parent: String, name: String },
+    CloseProject,
+    ProjectSystems,
+    #[serde(rename_all = "camelCase")]
+    LoadSystem { name: String },
+    #[serde(rename_all = "camelCase")]
+    TestSystem { name: String },
+    #[serde(rename_all = "camelCase")]
+    Build { system: String },
+    InstallDeps,
+    /// Updates dependencies with qlot or ocicl.
+    UpdateDeps,
+    /// Fetches one new dependency with qlot or ocicl.
+    #[serde(rename_all = "camelCase")]
+    FetchSystem { name: String },
+    #[serde(rename_all = "camelCase")]
+    ReturnString { thread: Thread, tag: i64, text: String },
+    #[serde(rename_all = "camelCase")]
+    AnswerYesNo { thread: Thread, tag: i64, yes: bool },
+    #[serde(rename_all = "camelCase")]
+    AssistantSend { text: String, context: Option<EditorContext> },
+    AssistantCancel,
+    AssistantReset,
+    AssistantStatus,
+    #[serde(rename_all = "camelCase")]
+    AssistantSetKey { key: String },
+    McpInfo,
+    #[serde(rename_all = "camelCase")]
+    ListDir { path: String },
+    #[serde(rename_all = "camelCase")]
+    ReadFile { path: String },
+    #[serde(rename_all = "camelCase")]
+    WriteFile { path: String, content: String },
+    #[serde(rename_all = "camelCase")]
+    CreateFile { path: String },
+    #[serde(rename_all = "camelCase")]
+    CreateDir { path: String },
+    #[serde(rename_all = "camelCase")]
+    RenamePath { from: String, to: String },
+    #[serde(rename_all = "camelCase")]
+    TrashPath { path: String },
+    #[serde(rename_all = "camelCase")]
+    Search { query: search::Query },
+    #[serde(rename_all = "camelCase")]
+    Replace { query: search::Query, replacement: String, paths: Vec<String> },
+    /// Finds a Common Lisp symbol's page in the local HyperSpec.
+    #[serde(rename_all = "camelCase")]
+    Hyperspec { symbol: String },
+    LispOptions,
+    /// The project's startup image, if it has one.
+    Image,
+    /// Builds a startup image with these systems loaded, in a separate SBCL.
+    #[serde(rename_all = "camelCase")]
+    SaveImage { systems: Vec<String> },
+    DeleteImage,
+    /// A file's text in the last git commit.
+    #[serde(rename_all = "camelCase")]
+    GitHead { path: String },
+    /// The project's changed and untracked files.
+    GitStatus,
+    /// Saves how Lisp starts; it takes effect when Lisp next starts.
+    #[serde(rename_all = "camelCase")]
+    SetLispOptions { options: LispOptions },
+    /// Installs SBCL with Homebrew, as a task.
+    InstallSbcl,
+}
+
+/// How ZenLisp starts SBCL, saved in its data folder.
+#[derive(Debug, Clone, Deserialize, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct LispOptions {
+    /// The sbcl program; empty looks on PATH and in Homebrew's and MacPorts' places.
+    pub sbcl: String,
+    /// Load ~/.sbclrc when Lisp starts.
+    pub load_userinit: bool,
+    /// SBCL's heap in megabytes; 0 keeps SBCL's default.
+    pub heap_mb: u32,
+    /// Compile development code for debugging (debug 3): locals and stepping work, tail calls stay.
+    pub debug_code: bool,
+}
+
+impl Default for LispOptions {
+    fn default() -> Self {
+        LispOptions { sbcl: String::new(), load_userinit: false, heap_mb: 0, debug_code: true }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum Response {
+    Lisp { reply: Reply },
+    Status(Status),
+    Project { project: Project },
+    #[serde(rename_all = "camelCase")]
+    Systems { systems: Vec<SystemInfo> },
+    #[serde(rename_all = "camelCase")]
+    Dir { entries: Vec<DirEntry> },
+    #[serde(rename_all = "camelCase")]
+    File { content: String },
+    Assistant(AssistantStatus),
+    Search(search::SearchResult),
+    #[serde(rename_all = "camelCase")]
+    Replaced { count: usize },
+    #[serde(rename_all = "camelCase")]
+    Mcp { info: Option<McpInfo> },
+    /// `page` is relative to the HyperSpec root, as its server serves it;
+    /// `installed` is false when no local HyperSpec was found.
+    #[serde(rename_all = "camelCase")]
+    Hyperspec { installed: bool, page: Option<String> },
+    /// The saved options, and the sbcl they find, if any.
+    #[serde(rename_all = "camelCase")]
+    LispOptions { options: LispOptions, sbcl: Option<String> },
+    #[serde(rename_all = "camelCase")]
+    Image { image: Option<ImageInfo> },
+    /// None when the file is untracked or not in a repository.
+    #[serde(rename_all = "camelCase")]
+    GitHead { text: Option<String> },
+    #[serde(rename_all = "camelCase")]
+    GitStatus { files: Vec<crate::git::GitFile> },
+    Ok,
+}
+
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct McpInfo {
+    pub url: String,
+    pub claude_command: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(tag = "state", rename_all = "camelCase")]
+#[ts(export)]
+pub enum SessionState {
+    Stopped,
+    Starting,
+    /// `image` is true when Lisp started from the project's saved image.
+    #[serde(rename_all = "camelCase")]
+    Ready { pid: u32, version: String, image: bool },
+    #[serde(rename_all = "camelCase")]
+    Failed { message: String },
+    /// Lisp ended without being asked to, such as a crash or `(exit)`.
+    #[serde(rename_all = "camelCase")]
+    Exited { message: String },
+}
+
+/// A project's saved startup image.
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ImageInfo {
+    pub path: String,
+    /// Seconds since the Unix epoch.
+    pub saved: u64,
+    pub megabytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Status {
+    pub session: SessionState,
+    pub project: Option<Project>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SystemInfo {
+    pub name: String,
+    pub file: String,
+    pub description: String,
+    pub version: String,
+    pub depends_on: Vec<String>,
+    pub loaded: bool,
+}
+
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DirEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+}
+
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum AppEvent {
+    Lisp { event: Event },
+    Status(Status),
+    #[serde(rename_all = "camelCase")]
+    TaskOutput { task: String, text: String },
+    #[serde(rename_all = "camelCase")]
+    TaskFinished { task: String, ok: bool, message: String },
+    Assistant { event: AssistantEvent },
+    #[serde(rename_all = "camelCase")]
+    FilesChanged { paths: Vec<String> },
+}
+
+struct Inner {
+    session: Option<Arc<Session>>,
+    state: SessionState,
+    project: Option<Project>,
+    debuggers: HashMap<Thread, Vec<Debugger>>,
+    watcher: Option<notify::RecommendedWatcher>,
+}
+
+pub struct Workbench {
+    config: SessionConfig,
+    options: std::sync::Mutex<LispOptions>,
+    inner: Mutex<Inner>,
+    events: broadcast::Sender<AppEvent>,
+    assistant: Arc<Assistant>,
+    mcp: std::sync::Mutex<Option<McpInfo>>,
+}
+
+type Result<T> = std::result::Result<T, String>;
+
+impl Workbench {
+    pub fn new(config: SessionConfig) -> Arc<Workbench> {
+        Arc::new(Workbench {
+            assistant: Arc::new(Assistant::new(&config.data_dir)),
+            options: std::sync::Mutex::new(load_options(&config.data_dir)),
+            mcp: std::sync::Mutex::new(None),
+            config,
+            inner: Mutex::new(Inner { session: None, state: SessionState::Stopped, project: None, debuggers: HashMap::new(), watcher: None }),
+            events: broadcast::channel(8192).0,
+        })
+    }
+
+    /// Where a project's startup image lives: in the data folder, named for the project's path.
+    fn image_path(&self, p: &Project) -> PathBuf {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in p.root.as_bytes() {
+            h = (h ^ *b as u64).wrapping_mul(0x100000001b3);
+        }
+        self.config.data_dir.join("images").join(format!("{}-{h:016x}.core", p.name))
+    }
+
+    /// The session config with the saved options applied.
+    fn configured(&self) -> SessionConfig {
+        let o = self.options.lock().unwrap().clone();
+        let mut cfg = self.config.clone();
+        if o.sbcl.trim().is_empty() {
+            cfg.resolve_sbcl();
+        } else {
+            cfg.sbcl = PathBuf::from(o.sbcl.trim());
+            cfg.sbcl_home = None;
+        }
+        cfg.load_userinit = o.load_userinit;
+        cfg.dynamic_space_mb = (o.heap_mb > 0).then_some(o.heap_mb);
+        cfg.debug_code = o.debug_code;
+        cfg
+    }
+
+    pub fn data_dir(&self) -> &Path {
+        &self.config.data_dir
+    }
+
+    pub fn set_mcp(&self, info: McpInfo) {
+        *self.mcp.lock().unwrap() = Some(info);
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
+        self.events.subscribe()
+    }
+
+    pub(crate) fn emit(&self, e: AppEvent) {
+        let _ = self.events.send(e);
+    }
+
+    pub async fn status(&self) -> Status {
+        let inner = self.inner.lock().await;
+        Status { session: inner.state.clone(), project: inner.project.clone() }
+    }
+
+    /// The innermost open debugger of each thread that is stopped in one.
+    pub async fn debuggers(&self) -> Vec<Debugger> {
+        let inner = self.inner.lock().await;
+        let mut v: Vec<Debugger> = inner.debuggers.values().filter_map(|levels| levels.last().cloned()).collect();
+        v.sort_by_key(|d| d.level);
+        v
+    }
+
+    async fn set_state(&self, state: SessionState) {
+        self.inner.lock().await.state = state;
+        self.emit(AppEvent::Status(self.status().await));
+    }
+
+    /// The running session, starting one if needed.
+    pub async fn session(self: &Arc<Self>) -> Result<Arc<Session>> {
+        if let Some(s) = self.inner.lock().await.session.clone() {
+            return Ok(s);
+        }
+        self.start().await
+    }
+
+    async fn start(self: &Arc<Self>) -> Result<Arc<Session>> {
+        self.set_state(SessionState::Starting).await;
+        let project = self.inner.lock().await.project.clone();
+        let mut cfg = self.configured();
+        if let Some(p) = &project {
+            cfg.cwd = PathBuf::from(&p.root);
+            let image = self.image_path(p);
+            if image.is_file() {
+                cfg.core = Some(image);
+            }
+        }
+        let session = match Session::start(&cfg).await {
+            Ok(s) => Arc::new(s),
+            Err(e) => {
+                self.set_state(SessionState::Failed { message: e.to_string() }).await;
+                return Err(e.to_string());
+            }
+        };
+        self.forward(&session);
+        if let Some(p) = &project {
+            for form in p.setup_forms() {
+                let op = Op::Eval { form: form.to_string(), package: "COMMON-LISP-USER".into() };
+                if let Err(e) = op.run(&session.conn).await {
+                    let message = format!("project setup failed at {form}: {e}");
+                    self.set_state(SessionState::Failed { message: message.clone() }).await;
+                    return Err(message);
+                }
+            }
+        }
+        let version_op = Op::Eval { form: "(lisp-implementation-version)".into(), package: "CL-USER".into() };
+        let version = match version_op.run(&session.conn).await {
+            Ok(Reply::Evaluated { value, .. }) => value.trim_matches('"').to_string(),
+            _ => String::new(),
+        };
+        self.inner.lock().await.session = Some(session.clone());
+        self.set_state(SessionState::Ready { pid: session.pid.unwrap_or_default(), version, image: cfg.core.is_some() }).await;
+        Ok(session)
+    }
+
+    fn forward(self: &Arc<Self>, session: &Arc<Session>) {
+        let mut rx = session.conn.subscribe();
+        let wb = Arc::downgrade(self);
+        let me = Arc::downgrade(session);
+        tokio::spawn(async move {
+            loop {
+                let event = match rx.recv().await {
+                    Ok(e) => e,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                };
+                let Some(wb) = wb.upgrade() else { break };
+                let disconnected = event == Event::Disconnected;
+                if matches!(event, Event::Debug(_) | Event::DebugReturn { .. } | Event::Disconnected) {
+                    let mut inner = wb.inner.lock().await;
+                    if inner.session.as_ref().is_some_and(|c| Arc::downgrade(c).ptr_eq(&me)) {
+                        track_debugger(&mut inner.debuggers, &event);
+                    }
+                }
+                wb.emit(AppEvent::Lisp { event });
+                if disconnected {
+                    let mut inner = wb.inner.lock().await;
+                    let current = inner.session.as_ref().map(Arc::downgrade);
+                    if current.is_some_and(|c| c.ptr_eq(&me)) {
+                        // Still the current session, so nobody stopped it: it died.
+                        let message = match inner.session.take() {
+                            Some(s) => s.exit_report().await,
+                            None => "Lisp closed its connection.".into(),
+                        };
+                        inner.state = SessionState::Exited { message };
+                        drop(inner);
+                        wb.emit(AppEvent::Status(wb.status().await));
+                    }
+                    break;
+                }
+            }
+        });
+    }
+
+    pub async fn stop(&self) {
+        let session = {
+            let mut inner = self.inner.lock().await;
+            inner.debuggers.clear();
+            inner.session.take()
+        };
+        if let Some(s) = session {
+            s.stop().await;
+        }
+        self.set_state(SessionState::Stopped).await;
+    }
+
+    async fn lisp(self: &Arc<Self>, op: Op) -> Result<Reply> {
+        let s = self.session().await?;
+        op.run(&s.conn).await.map_err(|e| e.to_string())
+    }
+
+    async fn call(self: &Arc<Self>, form: Sexp) -> Result<Sexp> {
+        let s = self.session().await?;
+        s.conn.rex(form, "COMMON-LISP-USER", Thread::T).await.map_err(|e| e.to_string())
+    }
+
+    async fn project(&self) -> Result<Project> {
+        self.inner.lock().await.project.clone().ok_or_else(|| "no project is open".to_string())
+    }
+
+    pub async fn handle(self: &Arc<Self>, req: Request) -> Result<Response> {
+        match req {
+            Request::Lisp { op } => Ok(Response::Lisp { reply: self.lisp(op).await? }),
+            Request::StartSession => {
+                self.session().await?;
+                Ok(Response::Status(self.status().await))
+            }
+            Request::RestartSession => {
+                self.stop().await;
+                self.start().await?;
+                Ok(Response::Status(self.status().await))
+            }
+            Request::Status => Ok(Response::Status(self.status().await)),
+            Request::OpenProject { root } => self.open_project(Path::new(&root)).await,
+            Request::NewProject { parent, name } => {
+                let root = project::create(Path::new(&parent), &name).map_err(|e| e.to_string())?;
+                self.open_project(&root).await
+            }
+            Request::CloseProject => {
+                self.stop().await;
+                let mut inner = self.inner.lock().await;
+                inner.project = None;
+                inner.watcher = None;
+                drop(inner);
+                self.emit(AppEvent::Status(self.status().await));
+                Ok(Response::Status(self.status().await))
+            }
+            Request::ProjectSystems => {
+                let p = self.project().await?;
+                let v = self.call(Sexp::list([Sexp::sym("zenlisp:project-systems"), Sexp::str(&p.root)])).await?;
+                Ok(Response::Systems { systems: v.items().iter().map(parse_system).collect() })
+            }
+            Request::LoadSystem { name } => {
+                self.session().await?;
+                tokio::spawn(self.clone().system_task(SystemTask::Load, name));
+                Ok(Response::Ok)
+            }
+            Request::TestSystem { name } => {
+                self.session().await?;
+                tokio::spawn(self.clone().system_task(SystemTask::Test, name));
+                Ok(Response::Ok)
+            }
+            Request::Build { system } => {
+                let p = self.project().await?;
+                let mut cmd = self.configured().sbcl_command();
+                cmd.args(p.build_args(&system));
+                self.process_task(format!("build {system}"), cmd, &p.root);
+                Ok(Response::Ok)
+            }
+            Request::InstallDeps => {
+                let p = self.project().await?;
+                let argv = p.install_command().ok_or("this project's dependencies install when its systems load")?;
+                self.process_task("install dependencies".into(), manager_command(&argv), &p.root);
+                Ok(Response::Ok)
+            }
+            Request::UpdateDeps => {
+                let p = self.project().await?;
+                let argv = p.update_command().ok_or("this project's dependencies update through Quicklisp")?;
+                self.process_task("update dependencies".into(), manager_command(&argv), &p.root);
+                Ok(Response::Ok)
+            }
+            Request::FetchSystem { name } => {
+                let p = self.project().await?;
+                let argv = p.fetch_command(&name).ok_or("Quicklisp fetches this system when it loads")?;
+                self.process_task(format!("fetch {name}"), manager_command(&argv), &p.root);
+                Ok(Response::Ok)
+            }
+            Request::ReturnString { thread, tag, text } => {
+                let s = self.session().await?;
+                s.conn.return_string(thread, tag, &text).await.map_err(|e| e.to_string())?;
+                Ok(Response::Ok)
+            }
+            Request::AnswerYesNo { thread, tag, yes } => {
+                let s = self.session().await?;
+                s.conn.return_value(thread, tag, Sexp::bool(yes)).await.map_err(|e| e.to_string())?;
+                Ok(Response::Ok)
+            }
+            Request::AssistantSend { text, context } => {
+                let events = self.events.clone();
+                let emit = Arc::new(move |event| {
+                    let _ = events.send(AppEvent::Assistant { event });
+                });
+                self.assistant.send(self.clone(), text, context, emit).await?;
+                Ok(Response::Ok)
+            }
+            Request::AssistantCancel => {
+                self.assistant.cancel().await;
+                self.emit(AppEvent::Assistant { event: AssistantEvent::TurnFinished { stop_reason: "cancelled".into() } });
+                Ok(Response::Ok)
+            }
+            Request::AssistantReset => {
+                self.assistant.reset().await;
+                Ok(Response::Ok)
+            }
+            Request::AssistantStatus => Ok(Response::Assistant(self.assistant.status().await)),
+            Request::AssistantSetKey { key } => {
+                self.assistant.set_key(&key).map_err(|e| e.to_string())?;
+                Ok(Response::Assistant(self.assistant.status().await))
+            }
+            Request::McpInfo => Ok(Response::Mcp { info: self.mcp.lock().unwrap().clone() }),
+            Request::InstallSbcl => {
+                let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+                    .into_iter()
+                    .find(|b| Path::new(b).is_file())
+                    .ok_or("Homebrew is not installed. Get it from brew.sh, or download SBCL from sbcl.org.")?;
+                let mut cmd = tokio::process::Command::new(brew);
+                cmd.args(["install", "sbcl"]);
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
+                self.process_task("install sbcl".into(), cmd, &home);
+                Ok(Response::Ok)
+            }
+            Request::GitHead { path } => {
+                let text = tokio::task::spawn_blocking(move || crate::git::head_text(Path::new(&path))).await.map_err(|e| e.to_string())?;
+                Ok(Response::GitHead { text })
+            }
+            Request::GitStatus => {
+                let root = PathBuf::from(self.project().await?.root);
+                let files = tokio::task::spawn_blocking(move || crate::git::status(&root)).await.map_err(|e| e.to_string())?;
+                Ok(Response::GitStatus { files })
+            }
+            Request::Image => {
+                let p = self.project().await?;
+                Ok(Response::Image { image: image_info(&self.image_path(&p)) })
+            }
+            Request::DeleteImage => {
+                let p = self.project().await?;
+                let path = self.image_path(&p);
+                if path.is_file() {
+                    std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+                }
+                Ok(Response::Image { image: None })
+            }
+            Request::SaveImage { systems } => {
+                let p = self.project().await?;
+                let cfg = self.configured();
+                let core = crate::session::ensure_core(&cfg).await.map_err(|e| e.to_string())?;
+                let path = self.image_path(&p);
+                std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+                let tmp = path.with_extension("tmp");
+                let mut cmd = cfg.sbcl_command();
+                cmd.arg("--core").arg(&core).args(["--noinform", "--non-interactive", "--no-userinit"]);
+                for form in p.setup_forms() {
+                    cmd.arg("--eval").arg(form.to_string());
+                }
+                for s in &systems {
+                    cmd.arg("--eval").arg(Sexp::list([Sexp::sym("zenlisp:load-system"), Sexp::str(s)]).to_string());
+                }
+                let save = Sexp::list([Sexp::sym("sb-ext:save-lisp-and-die"), Sexp::str(&tmp.display().to_string())]);
+                cmd.arg("--eval").arg(save.to_string());
+                // The image is renamed into place only once it is complete.
+                self.process_task_then("save startup image".into(), cmd, &p.root, move |ok| {
+                    if ok {
+                        let _ = std::fs::rename(&tmp, &path);
+                    } else {
+                        let _ = std::fs::remove_file(&tmp);
+                    }
+                });
+                Ok(Response::Ok)
+            }
+            Request::LispOptions => {
+                let options = self.options.lock().unwrap().clone();
+                let sbcl = self.configured().sbcl;
+                Ok(Response::LispOptions { options, sbcl: sbcl.is_file().then(|| sbcl.display().to_string()) })
+            }
+            Request::SetLispOptions { options } => {
+                std::fs::create_dir_all(&self.config.data_dir).map_err(|e| e.to_string())?;
+                let json = serde_json::to_string_pretty(&options).map_err(|e| e.to_string())?;
+                std::fs::write(self.config.data_dir.join(OPTIONS_FILE), json).map_err(|e| e.to_string())?;
+                *self.options.lock().unwrap() = options;
+                Ok(Response::Ok)
+            }
+            Request::Hyperspec { symbol } => Ok(match crate::docs::hyperspec() {
+                Some(hs) => Response::Hyperspec { installed: true, page: hs.page(&symbol).map(String::from) },
+                None => Response::Hyperspec { installed: false, page: None },
+            }),
+            Request::ListDir { path } => Ok(Response::Dir { entries: list_dir(Path::new(&path))? }),
+            Request::ReadFile { path } => {
+                Ok(Response::File { content: std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))? })
+            }
+            Request::WriteFile { path, content } => {
+                std::fs::write(&path, content).map_err(|e| format!("{path}: {e}"))?;
+                Ok(Response::Ok)
+            }
+            Request::CreateFile { path } => {
+                files::create_file(Path::new(&path)).map_err(|e| format!("{path}: {e}"))?;
+                Ok(Response::Ok)
+            }
+            Request::CreateDir { path } => {
+                files::create_dir(Path::new(&path)).map_err(|e| format!("{path}: {e}"))?;
+                Ok(Response::Ok)
+            }
+            Request::RenamePath { from, to } => {
+                files::rename(Path::new(&from), Path::new(&to)).map_err(|e| format!("{from}: {e}"))?;
+                Ok(Response::Ok)
+            }
+            Request::Search { query } => {
+                let root = PathBuf::from(self.project().await?.root);
+                let result = tokio::task::spawn_blocking(move || search::search(&root, &query))
+                    .await
+                    .map_err(|e| e.to_string())??;
+                Ok(Response::Search(result))
+            }
+            Request::Replace { query, replacement, paths } => {
+                let root = self.project().await?.root;
+                if let Some(outside) = paths.iter().find(|p| !p.starts_with(&root)) {
+                    return Err(format!("{outside} is outside the project"));
+                }
+                let count = tokio::task::spawn_blocking(move || search::replace(&paths, &query, &replacement))
+                    .await
+                    .map_err(|e| e.to_string())??;
+                Ok(Response::Replaced { count })
+            }
+            Request::TrashPath { path } => {
+                files::trash(Path::new(&path)).map_err(|e| format!("{path}: {e}"))?;
+                Ok(Response::Ok)
+            }
+        }
+    }
+
+    async fn open_project(self: &Arc<Self>, root: &Path) -> Result<Response> {
+        let root = root.canonicalize().map_err(|e| format!("{}: {e}", root.display()))?;
+        let project = Project::detect(&root);
+        self.stop().await;
+        let events = self.events.clone();
+        let watcher = files::watch(&root, move |paths| {
+            let _ = events.send(AppEvent::FilesChanged { paths });
+        })
+        .map_err(|e| format!("cannot watch {}: {e}", root.display()))?;
+        {
+            let mut inner = self.inner.lock().await;
+            inner.project = Some(project.clone());
+            inner.watcher = Some(watcher);
+        }
+        self.start().await?;
+        Ok(Response::Project { project })
+    }
+
+    /// Loads or tests a system and waits for it to finish. Output streams
+    /// through the REPL, and completion is also announced as `TaskFinished`.
+    /// `Err` means the task failed; an error that stops in the debugger keeps
+    /// this waiting until a restart is chosen.
+    pub async fn system_task(self: Arc<Self>, kind: SystemTask, name: String) -> Result<String> {
+        let (verb, helper) = match kind {
+            SystemTask::Load => ("load", "zenlisp:load-system"),
+            SystemTask::Test => ("test", "zenlisp:test-system"),
+        };
+        let task = format!("{verb} {name}");
+        let r = self.call(Sexp::list([Sexp::sym(helper), Sexp::str(&name)])).await.map(|v| v.to_string());
+        let (ok, message) = match &r {
+            Ok(m) => (true, m.clone()),
+            Err(m) => (false, m.clone()),
+        };
+        self.emit(AppEvent::TaskFinished { task, ok, message });
+        r
+    }
+
+    fn process_task(self: &Arc<Self>, task: String, cmd: tokio::process::Command, cwd: &str) {
+        self.process_task_then(task, cmd, cwd, |_| {});
+    }
+
+    /// Runs a program as a task, calling `done` with its success before announcing the end.
+    fn process_task_then(self: &Arc<Self>, task: String, mut cmd: tokio::process::Command, cwd: &str, done: impl FnOnce(bool) + Send + 'static) {
+        cmd.current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+        let wb = self.clone();
+        tokio::spawn(async move {
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    wb.emit(AppEvent::TaskFinished { task, ok: false, message: e.to_string() });
+                    return;
+                }
+            };
+            let pump = |r: Box<dyn tokio::io::AsyncRead + Unpin + Send>, wb: Arc<Workbench>, task: String| {
+                tokio::spawn(async move {
+                    let mut lines = BufReader::new(r).lines();
+                    while let Ok(Some(l)) = lines.next_line().await {
+                        wb.emit(AppEvent::TaskOutput { task: task.clone(), text: l + "\n" });
+                    }
+                })
+            };
+            let a = pump(Box::new(child.stdout.take().unwrap()), wb.clone(), task.clone());
+            let b = pump(Box::new(child.stderr.take().unwrap()), wb.clone(), task.clone());
+            let status = child.wait().await;
+            let _ = tokio::join!(a, b);
+            let (ok, message) = match status {
+                Ok(s) if s.success() => (true, "finished".to_string()),
+                Ok(s) => (false, format!("exited with {s}")),
+                Err(e) => (false, e.to_string()),
+            };
+            done(ok);
+            wb.emit(AppEvent::TaskFinished { task, ok, message });
+        });
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SystemTask {
+    Load,
+    Test,
+}
+
+/// Swank leaves a debugger level with `:debug-return` for that level, so a
+/// level and everything nested in it close together.
+fn track_debugger(debuggers: &mut HashMap<Thread, Vec<Debugger>>, event: &Event) {
+    match event {
+        Event::Debug(d) => {
+            let levels = debuggers.entry(d.thread).or_default();
+            levels.retain(|l| l.level < d.level);
+            levels.push(d.clone());
+        }
+        Event::DebugReturn { thread, level, .. } => {
+            if let Some(levels) = debuggers.get_mut(thread) {
+                levels.retain(|l| l.level < *level);
+                if levels.is_empty() {
+                    debuggers.remove(thread);
+                }
+            }
+        }
+        Event::Disconnected => debuggers.clear(),
+        _ => {}
+    }
+}
+
+fn parse_system(v: &Sexp) -> SystemInfo {
+    let text = |k: &str| v.plist_get(k).and_then(Sexp::as_str).unwrap_or_default().to_string();
+    SystemInfo {
+        name: text("name"),
+        file: text("file"),
+        description: text("description"),
+        version: text("version"),
+        depends_on: v
+            .plist_get("depends-on")
+            .map(Sexp::items)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|d| d.as_str().map(String::from))
+            .collect(),
+        loaded: v.plist_get("loaded").is_some_and(|l| !l.is_nil()),
+    }
+}
+
+fn list_dir(dir: &Path) -> Result<Vec<DirEntry>> {
+    const HIDDEN: [&str; 6] = [".git", ".qlot", "node_modules", "target", ".DS_Store", "ocicl"];
+    let mut entries: Vec<DirEntry> = std::fs::read_dir(dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .filter(|e| !HIDDEN.contains(&e.file_name().to_string_lossy().as_ref()))
+        .filter(|e| !e.file_name().to_string_lossy().ends_with(".fasl"))
+        .map(|e| DirEntry {
+            name: e.file_name().to_string_lossy().into_owned(),
+            path: e.path().display().to_string(),
+            is_dir: e.path().is_dir(),
+        })
+        .collect();
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    Ok(entries)
+}
+
+fn manager_command(argv: &[String]) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..]);
+    // ocicl looks for a Linux CA bundle unless told where macOS keeps one.
+    if std::env::var_os("SSL_CERT_FILE").is_none() && Path::new("/etc/ssl/cert.pem").is_file() {
+        cmd.env("SSL_CERT_FILE", "/etc/ssl/cert.pem");
+    }
+    cmd
+}
+
+const OPTIONS_FILE: &str = "lisp-options.json";
+
+fn load_options(data_dir: &Path) -> LispOptions {
+    std::fs::read_to_string(data_dir.join(OPTIONS_FILE)).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+fn image_info(path: &Path) -> Option<ImageInfo> {
+    let meta = std::fs::metadata(path).ok()?;
+    let saved = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    Some(ImageInfo { path: path.display().to_string(), saved, megabytes: meta.len() / 1_000_000 })
+}
