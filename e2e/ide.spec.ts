@@ -242,19 +242,41 @@ test("assistant runs tools in the live image and its code can be inserted", asyn
   await expect(page.locator(".chat-mcp pre")).toContainText("claude mcp add --transport http zenlisp");
   await page.getByTitle("Assistant settings").click();
 
+  const model = page.getByRole("combobox", { name: "Model" });
+  await expect(model).toHaveValue("claude:claude-opus-5-5");
+  await model.selectOption("openai:gpt-6.1-sol");
+  await expect(page.getByRole("heading", { name: "Connect OpenAI" }), "OpenAI asks for its own key").toBeVisible();
+  await page.getByPlaceholder("sk-…").fill("e2e");
+  await page.getByRole("button", { name: "Save key" }).click();
+  await page.getByPlaceholder("Ask OpenAI…  ⏎ to send").fill("And with OpenAI?");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".chat-assistant strong").last(), "OpenAI answers in the same conversation, through the same tools").toHaveText("42");
+  await expect(page.locator(".chat-assistant").last()).toContainText("OpenAI says");
+  await expect(page.locator(".chat-tool .dot.ready")).toHaveCount(2);
+  await model.selectOption("claude:claude-sonnet-5-5");
+  await expect(page.getByPlaceholder("Ask Claude…  ⏎ to send")).toBeVisible();
+  await page.keyboard.press("Meta+,");
+  await page.getByTestId("settings").getByRole("button", { name: "Assistant" }).click();
+  await expect(page.getByRole("combobox", { name: "Provider" }), "Settings shows the chat's choice").toHaveValue("claude");
+  await expect(page.getByRole("combobox", { name: "Claude model" })).toHaveValue("claude-sonnet-5-5");
+  await expect(page.getByRole("combobox", { name: "OpenAI model" })).toHaveValue("gpt-6.1-sol");
+  await page.getByRole("combobox", { name: "Claude model" }).selectOption("claude-opus-5-5");
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(model, "the chat follows a change made in Settings").toHaveValue("claude:claude-opus-5-5");
+
   await page.getByTitle("New conversation").click();
   await expect(page.locator(".chat-user")).toHaveCount(0);
   await page.getByTitle("Earlier conversations").click();
   const earlier = page.getByRole("menu", { name: "Earlier conversations" });
   await earlier.getByRole("menuitem", { name: /What is six times seven\?/ }).click();
-  await expect(page.locator(".chat-user"), "a saved conversation opens again").toHaveText("What is six times seven?");
-  await expect(page.locator(".chat-assistant strong"), "with its answer").toHaveText("42");
-  await expect(page.locator(".chat-tool"), "and its tool call").toContainText("eval");
+  await expect(page.locator(".chat-user"), "a saved conversation opens again").toHaveText(["What is six times seven?", "And with OpenAI?"]);
+  await expect(page.locator(".chat-assistant strong"), "with its answers").toHaveText(["42", "42"]);
+  await expect(page.locator(".chat-tool"), "and its tool calls, from both providers").toContainText(["eval", "eval"]);
 
   await page.reload();
   await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
   await page.getByTitle("AI assistant (⌘L)").click();
-  await expect(page.locator(".chat-user"), "opening the assistant again restores the latest conversation").toHaveText("What is six times seven?", { timeout: 10_000 });
+  await expect(page.locator(".chat-user").first(), "opening the assistant again restores the latest conversation").toHaveText("What is six times seven?", { timeout: 10_000 });
   await page.getByTitle("Earlier conversations").click();
   const row = earlier.locator(".session", { hasText: "What is six times seven?" });
   await row.hover();

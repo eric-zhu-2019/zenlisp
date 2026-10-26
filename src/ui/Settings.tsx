@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import * as actions from "../actions";
 import { CODE_FONTS, installed, UI_FONTS } from "../fonts";
+import type { AssistantConfig } from "../protocol/AssistantConfig";
 import type { AssistantStatus } from "../protocol/AssistantStatus";
+import type { Provider } from "../protocol/Provider";
+import type { ProviderStatus } from "../protocol/ProviderStatus";
 import type { ImageInfo } from "../protocol/ImageInfo";
 import type { LispOptions } from "../protocol/LispOptions";
 import { type Settings as EditorSettings, updateSettings, useSettings } from "../settings";
@@ -407,44 +410,108 @@ function StartupImage() {
   );
 }
 
+const PROVIDERS: Record<Provider, { name: string; env: string; placeholder: string }> = {
+  claude: { name: "Claude", env: "ANTHROPIC_API_KEY", placeholder: "sk-ant-…" },
+  openai: { name: "OpenAI", env: "OPENAI_API_KEY", placeholder: "sk-…" },
+};
+
+/** One of a provider's models, or any other model name typed in. */
+function ModelPicker({ label, value, models, onChange }: { label: string; value: string; models: string[]; onChange: (v: string) => void }) {
+  const [other, setOther] = useState(!models.includes(value));
+  const [typed, setTyped] = useState(value);
+  const commit = () => typed.trim() && onChange(typed.trim());
+  return (
+    <div className="path-input">
+      <select
+        className="select"
+        aria-label={label}
+        value={other ? OTHER : value}
+        onChange={(e) => {
+          const v = e.target.value;
+          setOther(v === OTHER);
+          if (v !== OTHER) onChange(v);
+        }}
+      >
+        {models.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+        <option value={OTHER}>Other…</option>
+      </select>
+      {other && (
+        <input
+          aria-label={`${label} name`}
+          placeholder="Model name"
+          value={typed}
+          autoFocus
+          onChange={(e) => setTyped(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => e.key === "Enter" && commit()}
+        />
+      )}
+    </div>
+  );
+}
+
+function KeyRow({ provider, status, onSaved }: { provider: Provider; status: ProviderStatus; onSaved: () => void }) {
+  const [key, setKey] = useState("");
+  const { name, env, placeholder } = PROVIDERS[provider];
+  const source = status.source;
+  return (
+    <Row
+      label={`${name} API key`}
+      hint={
+        source === "environment"
+          ? `Set by ${env} in the environment.`
+          : source === "ant"
+            ? "Taken from the ant command line tool's login."
+            : status.configured
+              ? "Saved in ZenLisp's data folder."
+              : `${name} models need an API key.`
+      }
+    >
+      <div className="path-input">
+        <input type="password" aria-label={`${name} API key`} placeholder={status.configured ? "•••••••• saved" : placeholder} value={key} onChange={(e) => setKey(e.target.value)} />
+        <button
+          className="btn"
+          disabled={!key.trim()}
+          onClick={async () => {
+            await actions.request({ type: "assistantSetKey", provider, key: key.trim() });
+            setKey("");
+            onSaved();
+          }}
+        >
+          Save
+        </button>
+      </div>
+    </Row>
+  );
+}
+
 function Assistant() {
   const [status, setStatus] = useState<AssistantStatus | null>(null);
-  const [key, setKey] = useState("");
   const refresh = () => actions.request({ type: "assistantStatus" }).then((r) => r.type === "assistant" && setStatus(r));
   useEffect(() => void refresh(), []);
-  const source = status?.source;
+  if (!status) return null;
+  const configure = (change: Partial<AssistantConfig>) =>
+    actions.request({ type: "assistantConfigure", config: { ...status.config, ...change } }).then((r) => r.type === "assistant" && setStatus(r));
   return (
     <>
-      <Row
-        label="API key"
-        hint={
-          !status
-            ? undefined
-            : source === "environment"
-              ? "Set by ANTHROPIC_API_KEY in the environment."
-              : source === "ant"
-                ? "Taken from the ant command line tool's login."
-                : status.configured
-                  ? "Saved in ZenLisp's data folder."
-                  : "The assistant needs an Anthropic API key."
-        }
-      >
-        <div className="path-input">
-          <input type="password" placeholder={status?.configured ? "•••••••• saved" : "sk-ant-…"} value={key} onChange={(e) => setKey(e.target.value)} />
-          <button
-            className="btn"
-            disabled={!key.trim()}
-            onClick={async () => {
-              await actions.request({ type: "assistantSetKey", key: key.trim() });
-              setKey("");
-              await refresh();
-            }}
-          >
-            Save
-          </button>
-        </div>
+      <Row label="Answered by" hint="The chat's model menu switches too.">
+        <select className="select" aria-label="Provider" value={status.config.provider} onChange={(e) => void configure({ provider: e.target.value as Provider })}>
+          <option value="claude">Claude</option>
+          <option value="openai">OpenAI</option>
+        </select>
       </Row>
-      {status && <Row label="Model">{status.model}</Row>}
+      <Row label="Claude model">
+        <ModelPicker label="Claude model" value={status.config.claudeModel} models={status.claude.models} onChange={(claudeModel) => void configure({ claudeModel })} />
+      </Row>
+      <KeyRow provider="claude" status={status.claude} onSaved={refresh} />
+      <Row label="OpenAI model">
+        <ModelPicker label="OpenAI model" value={status.config.openaiModel} models={status.openai.models} onChange={(openaiModel) => void configure({ openaiModel })} />
+      </Row>
+      <KeyRow provider="openai" status={status.openai} onSaved={refresh} />
     </>
   );
 }

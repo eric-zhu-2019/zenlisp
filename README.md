@@ -136,13 +136,19 @@ program would start. **Load** loads a system and fetches its dependencies. **Tes
 `asdf:test-system`. **Build** runs `asdf:make` in a separate SBCL and streams
 the output to the **Output** panel.
 
-## Use Claude
+## Use Claude or OpenAI
 
-Open the assistant with ⌘L. It needs an Anthropic API key, which you can paste
-in the assistant settings. ZenLisp also uses `ANTHROPIC_API_KEY`,
-`ANTHROPIC_AUTH_TOKEN`, or an `ant auth login` profile when one exists. The
-assistant uses `claude-opus-5-5` and the same tools as the MCP server below.
-Code it proposes in a reply has **Insert** and **Eval** buttons.
+Open the assistant with ⌘L. It answers with Claude or with OpenAI, and the
+model menu under the chat switches between them, even mid-conversation.
+Settings ▸ Assistant picks each provider's model, `claude-opus-5-5` and
+`gpt-6.1-sol` by default, or any other model name.
+
+Each provider needs an API key, which you can paste in the assistant. For
+Claude, ZenLisp also uses `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or an
+`ant auth login` profile. For OpenAI, it uses `OPENAI_API_KEY`, and
+`OPENAI_BASE_URL` points it at another server with the Responses API. Both use
+the same tools as the MCP server below. Code proposed in a reply has
+**Insert** and **Eval** buttons.
 
 To let Claude Code work in your image, copy the command from the assistant
 settings and run it in a terminal. It looks like this:

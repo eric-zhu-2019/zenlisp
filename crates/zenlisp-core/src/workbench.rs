@@ -1,4 +1,4 @@
-use crate::assistant::{Assistant, AssistantEvent, AssistantStatus, EditorContext, SessionInfo};
+use crate::assistant::{Assistant, AssistantConfig, AssistantEvent, AssistantStatus, EditorContext, Provider, SessionInfo};
 use crate::files;
 use crate::search;
 use crate::ops::{Op, Reply};
@@ -70,7 +70,10 @@ pub enum Request {
     AssistantDeleteSession { id: String },
     AssistantStatus,
     #[serde(rename_all = "camelCase")]
-    AssistantSetKey { key: String },
+    AssistantSetKey { provider: Provider, key: String },
+    /// Chooses the provider that answers and each provider's model.
+    #[serde(rename_all = "camelCase")]
+    AssistantConfigure { config: AssistantConfig },
     McpInfo,
     #[serde(rename_all = "camelCase")]
     ListDir { path: String },
@@ -654,8 +657,12 @@ impl Workbench {
                 Ok(Response::Ok)
             }
             Request::AssistantStatus => Ok(Response::Assistant(self.assistant.status().await)),
-            Request::AssistantSetKey { key } => {
-                self.assistant.set_key(&key).map_err(|e| e.to_string())?;
+            Request::AssistantSetKey { provider, key } => {
+                self.assistant.set_key(provider, &key).map_err(|e| e.to_string())?;
+                Ok(Response::Assistant(self.assistant.status().await))
+            }
+            Request::AssistantConfigure { config } => {
+                self.assistant.configure(&config).map_err(|e| e.to_string())?;
                 Ok(Response::Assistant(self.assistant.status().await))
             }
             Request::McpInfo => Ok(Response::Mcp { info: self.mcp.lock().unwrap().clone() }),

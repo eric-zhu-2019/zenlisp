@@ -1521,6 +1521,13 @@ textarea {
   font-size: 12px !important;
   color: var(--text-dim) !important;
 }
+.chat-input-bar .chat-model {
+  min-width: 0;
+  max-width: 150px;
+  height: 22px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
 
 .tab .close .dirty {
   display: none;

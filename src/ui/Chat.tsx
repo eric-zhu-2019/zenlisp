@@ -3,6 +3,7 @@ import * as actions from "../actions";
 import { editorContext, insertAtCursor } from "../editor/commands";
 import type { AssistantStatus } from "../protocol/AssistantStatus";
 import type { McpInfo } from "../protocol/McpInfo";
+import type { Provider } from "../protocol/Provider";
 import { set, useStore, type ChatItem } from "../store";
 import { Icon } from "./Icon";
 import type { SessionInfo } from "../protocol/SessionInfo";
@@ -137,6 +138,39 @@ function Message({ item }: { item: ChatItem }) {
   }
 }
 
+const NAMES: Record<Provider, string> = { claude: "Claude", openai: "OpenAI" };
+
+/** The active provider's model, chosen among both providers' models. */
+function ModelMenu({ status, onChange }: { status: AssistantStatus; onChange: (s: AssistantStatus) => void }) {
+  const { config } = status;
+  const models = (p: Provider) => {
+    const chosen = p === "claude" ? config.claudeModel : config.openaiModel;
+    return status[p].models.includes(chosen) ? status[p].models : [chosen, ...status[p].models];
+  };
+  return (
+    <select
+      className="select chat-model"
+      aria-label="Model"
+      value={`${config.provider}:${config.provider === "claude" ? config.claudeModel : config.openaiModel}`}
+      onChange={(e) => {
+        const [provider, model] = e.target.value.split(/:(.*)/) as [Provider, string];
+        const next = { ...config, provider, ...(provider === "claude" ? { claudeModel: model } : { openaiModel: model }) };
+        actions.request({ type: "assistantConfigure", config: next }).then((r) => r.type === "assistant" && onChange(r));
+      }}
+    >
+      {(["claude", "openai"] as const).map((p) => (
+        <optgroup key={p} label={NAMES[p]}>
+          {models(p).map((m) => (
+            <option key={m} value={`${p}:${m}`}>
+              {m}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
 function Setup({ status, onSaved }: { status: AssistantStatus | null; onSaved: () => void }) {
   const [key, setKey] = useState("");
   const [mcp, setMcp] = useState<McpInfo | null>(null);
@@ -144,23 +178,30 @@ function Setup({ status, onSaved }: { status: AssistantStatus | null; onSaved: (
   useEffect(() => {
     actions.request({ type: "mcpInfo" }).then((r) => r.type === "mcp" && setMcp(r.info));
   }, []);
+  const provider = status?.config.provider ?? "claude";
   return (
     <div className="chat-setup">
-      {!status?.configured && (
+      {status && !status[provider].configured && (
         <form
           onSubmit={async (e) => {
             e.preventDefault();
-            await actions.request({ type: "assistantSetKey", key });
+            await actions.request({ type: "assistantSetKey", provider, key });
             setKey("");
             onSaved();
           }}
         >
-          <h3>Connect Claude</h3>
-          <p>
-            Paste an Anthropic API key. ZenLisp also uses <code>ANTHROPIC_API_KEY</code> or an <code>ant auth login</code> profile
-            when present. The key is stored only on this Mac.
-          </p>
-          <input type="password" placeholder="sk-ant-…" value={key} onChange={(e) => setKey(e.target.value)} />
+          <h3>Connect {NAMES[provider]}</h3>
+          {provider === "claude" ? (
+            <p>
+              Paste an Anthropic API key. ZenLisp also uses <code>ANTHROPIC_API_KEY</code> or an <code>ant auth login</code> profile
+              when present. The key is stored only on this Mac.
+            </p>
+          ) : (
+            <p>
+              Paste an OpenAI API key. ZenLisp also uses <code>OPENAI_API_KEY</code> when present. The key is stored only on this Mac.
+            </p>
+          )}
+          <input type="password" placeholder={provider === "claude" ? "sk-ant-…" : "sk-…"} value={key} onChange={(e) => setKey(e.target.value)} />
           <button className="btn primary" disabled={!key.trim()}>
             Save key
           </button>
@@ -249,11 +290,13 @@ export function Chat() {
   const [showHistory, setShowHistory] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
 
+  const settingsOpen = useStore((s) => s.settingsOpen);
   const refresh = () => actions.request({ type: "assistantStatus" }).then((r) => r.type === "assistant" && setStatus(r));
+  useEffect(() => void restoreLatest(), []);
+  // Settings may have changed the model or a key.
   useEffect(() => {
-    refresh();
-    void restoreLatest();
-  }, []);
+    if (!settingsOpen) void refresh();
+  }, [settingsOpen]);
   useLayoutEffect(() => {
     if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
   }, [chat]);
@@ -265,7 +308,8 @@ export function Chat() {
     await actions.askAssistant(t, withContext ? editorContext() : null);
   };
 
-  const needsSetup = status !== null && !status.configured;
+  const needsSetup = status !== null && !status[status.config.provider].configured;
+  const name = NAMES[status?.config.provider ?? "claude"];
 
   return (
     <>
@@ -310,7 +354,7 @@ export function Chat() {
       <div className="chat-input">
         <textarea
           rows={3}
-          placeholder={needsSetup ? "Connect Claude above to start" : "Ask Claude…  ⏎ to send"}
+          placeholder={needsSetup ? `Connect ${name} above to start` : `Ask ${name}…  ⏎ to send`}
           value={text}
           disabled={needsSetup}
           onChange={(e) => setText(e.target.value)}
@@ -326,6 +370,7 @@ export function Chat() {
             <input type="checkbox" checked={withContext} onChange={(e) => setWithContext(e.target.checked)} /> Include current form
           </label>
           <span className="grow" />
+          {status && <ModelMenu status={status} onChange={setStatus} />}
           {busy ? (
             <button className="btn danger" onClick={() => actions.request({ type: "assistantCancel" })}>
               <Icon name="stop" size={10} /> Stop

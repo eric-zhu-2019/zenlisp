@@ -8,7 +8,9 @@ use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
 use ts_rs::TS;
 
-const MODEL: &str = "claude-opus-5-5";
+/// The models offered for each provider, the default first. Any other name can be typed in.
+const CLAUDE_MODELS: [&str; 4] = ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-5-5"];
+const OPENAI_MODELS: [&str; 4] = ["gpt-6.1-sol", "gpt-6-astra", "gpt-6.1-terra", "gpt-6-luna"];
 const API_VERSION: &str = "2026-10-21";
 const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
@@ -52,14 +54,47 @@ pub struct EditorContext {
     pub form: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum Provider {
+    Claude,
+    OpenAI,
+}
+
+/// Which provider answers, and the model chosen for each. Kept in `assistant.json`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct AssistantConfig {
+    pub provider: Provider,
+    pub claude_model: String,
+    pub openai_model: String,
+}
+
+impl Default for AssistantConfig {
+    fn default() -> Self {
+        AssistantConfig { provider: Provider::Claude, claude_model: CLAUDE_MODELS[0].into(), openai_model: OPENAI_MODELS[0].into() }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ProviderStatus {
+    pub configured: bool,
+    pub source: Option<CredentialSource>,
+    pub models: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, TS, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct AssistantStatus {
-    pub configured: bool,
-    pub source: Option<CredentialSource>,
     pub busy: bool,
-    pub model: String,
+    pub config: AssistantConfig,
+    pub claude: ProviderStatus,
+    pub openai: ProviderStatus,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, TS, PartialEq)]
@@ -79,8 +114,9 @@ enum Credential {
 
 pub struct Assistant {
     http: reqwest::Client,
-    key_file: PathBuf,
+    data_dir: PathBuf,
     base_url: String,
+    openai_url: String,
     history: Mutex<Vec<Value>>,
     running: Mutex<Option<AbortHandle>>,
     /// Where conversations are kept, one JSON file each, so they outlive the app.
@@ -130,8 +166,9 @@ impl Assistant {
     pub fn new(data_dir: &Path) -> Assistant {
         Assistant {
             http: reqwest::Client::new(),
-            key_file: data_dir.join("anthropic-api-key"),
+            data_dir: data_dir.into(),
             base_url: std::env::var("ANTHROPIC_BASE_URL").unwrap_or_else(|_| "https://api.anthropic.com".into()),
+            openai_url: std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".into()),
             history: Mutex::new(Vec::new()),
             running: Mutex::new(None),
             sessions_dir: data_dir.join("assistant-sessions"),
@@ -187,16 +224,39 @@ impl Assistant {
         }
     }
 
-    async fn credential(&self) -> Option<(Credential, CredentialSource)> {
-        if let Ok(k) = std::fs::read_to_string(&self.key_file) {
+    fn key_file(&self, provider: Provider) -> PathBuf {
+        self.data_dir.join(match provider {
+            Provider::Claude => "anthropic-api-key",
+            Provider::OpenAI => "openai-api-key",
+        })
+    }
+
+    pub fn config(&self) -> AssistantConfig {
+        std::fs::read(self.data_dir.join("assistant.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    }
+
+    pub fn configure(&self, config: &AssistantConfig) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.data_dir)?;
+        std::fs::write(self.data_dir.join("assistant.json"), serde_json::to_vec(config)?)
+    }
+
+    async fn credential(&self, provider: Provider) -> Option<(Credential, CredentialSource)> {
+        if let Ok(k) = std::fs::read_to_string(self.key_file(provider)) {
             if !k.trim().is_empty() {
                 return Some((Credential::ApiKey(k.trim().into()), CredentialSource::Settings));
             }
         }
-        if let Ok(k) = std::env::var("ANTHROPIC_API_KEY") {
+        let env = match provider {
+            Provider::Claude => "ANTHROPIC_API_KEY",
+            Provider::OpenAI => "OPENAI_API_KEY",
+        };
+        if let Ok(k) = std::env::var(env) {
             if !k.is_empty() {
                 return Some((Credential::ApiKey(k), CredentialSource::Environment));
             }
+        }
+        if provider == Provider::OpenAI {
+            return None;
         }
         if let Ok(t) = std::env::var("ANTHROPIC_AUTH_TOKEN") {
             if !t.is_empty() {
@@ -213,24 +273,27 @@ impl Assistant {
     }
 
     pub async fn status(&self) -> AssistantStatus {
-        let cred = self.credential().await;
         AssistantStatus {
-            configured: cred.is_some(),
-            source: cred.map(|(_, s)| s),
             busy: self.running.lock().await.as_ref().is_some_and(|h| !h.is_finished()),
-            model: MODEL.into(),
+            config: self.config(),
+            claude: self.provider_status(Provider::Claude, &CLAUDE_MODELS).await,
+            openai: self.provider_status(Provider::OpenAI, &OPENAI_MODELS).await,
         }
     }
 
-    pub fn set_key(&self, key: &str) -> std::io::Result<()> {
-        if let Some(dir) = self.key_file.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        std::fs::write(&self.key_file, key.trim())?;
+    async fn provider_status(&self, provider: Provider, models: &[&str]) -> ProviderStatus {
+        let source = self.credential(provider).await.map(|(_, s)| s);
+        ProviderStatus { configured: source.is_some(), source, models: models.iter().map(|m| m.to_string()).collect() }
+    }
+
+    pub fn set_key(&self, provider: Provider, key: &str) -> std::io::Result<()> {
+        let file = self.key_file(provider);
+        std::fs::create_dir_all(&self.data_dir)?;
+        std::fs::write(&file, key.trim())?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&self.key_file, std::fs::Permissions::from_mode(0o600))?;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600))?;
         }
         Ok(())
     }
@@ -279,19 +342,23 @@ impl Assistant {
     }
 
     async fn turn(&self, wb: &Arc<Workbench>, user: Value, emit: &Emit) -> Result<String, String> {
-        let (cred, _) = self
-            .credential()
-            .await
-            .ok_or("No Anthropic credentials. Add an API key in the assistant settings, set ANTHROPIC_API_KEY, or run `ant auth login`.")?;
+        let config = self.config();
+        let (cred, _) = self.credential(config.provider).await.ok_or(match config.provider {
+            Provider::Claude => "No Anthropic credentials. Add an API key in the assistant settings, set ANTHROPIC_API_KEY, or run `ant auth login`.",
+            Provider::OpenAI => "No OpenAI API key. Add one in the assistant settings or set OPENAI_API_KEY.",
+        })?;
         // History only grows: we append the user's message and each response
         // whole, thinking blocks included, so cached prefixes stay valid.
         self.history.lock().await.push(user);
         for _ in 0..MAX_TOOL_ROUNDS {
             let messages = self.history.lock().await.clone();
-            let reply = self.stream_message(&cred, &messages, emit).await?;
+            let reply = match config.provider {
+                Provider::Claude => self.stream_message(&cred, &config.claude_model, &claude_messages(&messages), emit).await?,
+                Provider::OpenAI => self.stream_openai(&cred, &config.openai_model, &messages, emit).await?,
+            };
             match reply.stop_reason.as_str() {
                 // A declined turn may stop mid-output, so its partial content is dropped.
-                "refusal" => return Err(format!("Claude declined this request{}", reply.refusal_note())),
+                "refusal" => return Err(format!("The model declined this request{}", reply.refusal_note())),
                 _ => self.history.lock().await.push(json!({ "role": "assistant", "content": reply.content })),
             }
             let calls = reply.tool_uses();
@@ -308,7 +375,7 @@ impl Assistant {
         Err(format!("Stopped after {MAX_TOOL_ROUNDS} rounds of tool calls."))
     }
 
-    fn body(&self, messages: &[Value]) -> Value {
+    fn body(&self, model: &str, messages: &[Value]) -> Value {
         let tools: Vec<Value> = tools::specs()
             .into_iter()
             .map(|t| {
@@ -321,7 +388,7 @@ impl Assistant {
             })
             .collect();
         json!({
-            "model": MODEL,
+            "model": model,
             "max_tokens": MAX_TOKENS,
             "stream": true,
             "system": [{ "type": "text", "text": SYSTEM, "cache_control": { "type": "ephemeral" } }],
@@ -334,7 +401,7 @@ impl Assistant {
         })
     }
 
-    async fn stream_message(&self, cred: &Credential, messages: &[Value], emit: &Emit) -> Result<Reply, String> {
+    async fn stream_message(&self, cred: &Credential, model: &str, messages: &[Value], emit: &Emit) -> Result<Reply, String> {
         let mut betas = vec![FALLBACK_BETA];
         let mut req = self
             .http
@@ -350,7 +417,7 @@ impl Assistant {
         }
         let resp = req
             .header("anthropic-beta", betas.join(","))
-            .json(&self.body(messages))
+            .json(&self.body(model, messages))
             .send()
             .await
             .map_err(|e| format!("could not reach the Anthropic API: {e}"))?;
@@ -376,6 +443,166 @@ impl Assistant {
         }
         Ok(reply)
     }
+
+    /// One OpenAI Responses call. Text streams to `emit`; the reply is read
+    /// from the finished response, its output items kept whole for the next call.
+    async fn stream_openai(&self, cred: &Credential, model: &str, messages: &[Value], emit: &Emit) -> Result<Reply, String> {
+        let (Credential::ApiKey(key) | Credential::OAuth(key)) = cred;
+        let tools: Vec<Value> = tools::specs()
+            .into_iter()
+            .map(|t| json!({ "type": "function", "name": t.name, "description": t.description, "parameters": t.input_schema, "strict": false }))
+            .collect();
+        let body = json!({
+            "model": model,
+            "instructions": SYSTEM,
+            "input": openai_input(messages),
+            "tools": tools,
+            "stream": true,
+            "store": false,
+            "include": ["reasoning.encrypted_content"],
+            "reasoning": { "effort": "high" },
+            "max_output_tokens": MAX_TOKENS,
+        });
+        let resp = self
+            .http
+            .post(format!("{}/responses", self.openai_url))
+            .bearer_auth(key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("could not reach the OpenAI API: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|v| v.pointer("/error/message").and_then(Value::as_str).map(String::from))
+                .unwrap_or(body);
+            return Err(format!("OpenAI API error {status}: {message}"));
+        }
+        let mut stream = resp.bytes_stream();
+        let mut sse = SseBuffer::default();
+        use futures::StreamExt;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("stream interrupted: {e}"))?;
+            for data in sse.push(&chunk) {
+                let Ok(event) = serde_json::from_str::<Value>(&data) else { continue };
+                match event["type"].as_str().unwrap_or_default() {
+                    "response.output_text.delta" => emit(AssistantEvent::Text { text: event["delta"].as_str().unwrap_or_default().into() }),
+                    "response.completed" | "response.incomplete" => return Ok(openai_reply(&event["response"])),
+                    "response.failed" => return Err(event["response"]["error"]["message"].as_str().unwrap_or("the response failed").into()),
+                    "error" => return Err(event["message"].as_str().unwrap_or("stream error").into()),
+                    _ => {}
+                }
+            }
+        }
+        Err("The OpenAI stream ended before the response finished.".into())
+    }
+}
+
+/// Blocks in the history holding an OpenAI response's output items, replayed
+/// to OpenAI as they came and left out for Claude.
+const OPENAI_OUTPUT: &str = "openai_output";
+
+/// The history as Claude takes it: without OpenAI's own items.
+fn claude_messages(messages: &[Value]) -> Vec<Value> {
+    messages
+        .iter()
+        .filter_map(|m| {
+            let mut m = m.clone();
+            if let Some(content) = m["content"].as_array_mut() {
+                content.retain(|b| b["type"] != OPENAI_OUTPUT);
+                if content.is_empty() {
+                    return None;
+                }
+            }
+            Some(m)
+        })
+        .collect()
+}
+
+/// The history as OpenAI Responses input items. Claude's thinking is left out.
+fn openai_input(messages: &[Value]) -> Vec<Value> {
+    let mut items = Vec::new();
+    for m in messages {
+        let content = m["content"].as_array().cloned().unwrap_or_default();
+        if m["role"] == "user" {
+            let mut texts = Vec::new();
+            for b in &content {
+                match b["type"].as_str() {
+                    Some("tool_result") => {
+                        let output = match &b["content"] {
+                            Value::String(s) => s.clone(),
+                            Value::Array(parts) => parts.iter().filter_map(|p| p["text"].as_str()).collect(),
+                            _ => String::new(),
+                        };
+                        items.push(json!({ "type": "function_call_output", "call_id": b["tool_use_id"], "output": output }));
+                    }
+                    Some("text") => texts.push(json!({ "type": "input_text", "text": b["text"] })),
+                    _ => {}
+                }
+            }
+            if !texts.is_empty() {
+                items.push(json!({ "role": "user", "content": texts }));
+            }
+        } else if let Some(own) = content.iter().find(|b| b["type"] == OPENAI_OUTPUT) {
+            items.extend(own["items"].as_array().cloned().unwrap_or_default());
+        } else {
+            for b in &content {
+                match b["type"].as_str() {
+                    Some("text") => items.push(json!({ "role": "assistant", "content": [{ "type": "output_text", "text": b["text"] }] })),
+                    Some("tool_use") => items.push(json!({ "type": "function_call", "call_id": b["id"], "name": b["name"], "arguments": b["input"].to_string() })),
+                    _ => {}
+                }
+            }
+        }
+    }
+    items
+}
+
+/// A finished Responses object as a reply in the history's own blocks.
+fn openai_reply(response: &Value) -> Reply {
+    let output = response["output"].as_array().cloned().unwrap_or_default();
+    let mut reply = Reply::default();
+    let mut refusal = None;
+    for item in &output {
+        match item["type"].as_str() {
+            Some("message") => {
+                for part in item["content"].as_array().into_iter().flatten() {
+                    match part["type"].as_str() {
+                        Some("output_text") if part["text"].as_str().is_some_and(|t| !t.is_empty()) => {
+                            reply.content.push(json!({ "type": "text", "text": part["text"] }));
+                            reply.partial_json.push(String::new());
+                        }
+                        Some("refusal") => refusal = Some(part["refusal"].clone()),
+                        _ => {}
+                    }
+                }
+            }
+            Some("function_call") => {
+                let raw = item["arguments"].as_str().unwrap_or_default().to_string();
+                let input = serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| json!({}));
+                reply.content.push(json!({ "type": "tool_use", "id": item["call_id"], "name": item["name"], "input": input }));
+                reply.partial_json.push(raw);
+            }
+            _ => {}
+        }
+    }
+    reply.content.push(json!({ "type": OPENAI_OUTPUT, "items": output }));
+    reply.partial_json.push(String::new());
+    let incomplete = response["incomplete_details"]["reason"].as_str();
+    reply.stop_reason = if refusal.is_some() || incomplete == Some("content_filter") {
+        reply.stop_details = refusal.map(|r| json!({ "explanation": r }));
+        "refusal"
+    } else if incomplete == Some("max_output_tokens") {
+        "max_tokens"
+    } else if reply.content.iter().any(|b| b["type"] == "tool_use") {
+        "tool_use"
+    } else {
+        "end_turn"
+    }
+    .into();
+    reply
 }
 
 fn user_message(text: &str, context: Option<&EditorContext>) -> Value {
