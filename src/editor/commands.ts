@@ -1,11 +1,12 @@
 import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import type { Diagnostic } from "@codemirror/lint";
 import type { EditorState } from "@codemirror/state";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import { getCM } from "@replit/codemirror-vim";
 import * as actions from "../actions";
 import { autodocForm, enclosingLists, formAtOrBefore, isSymbolChar, listEnd, packageAt, symbolAt } from "../lisp/forms";
 import { definitions, formBefore } from "../lisp/tree";
+import { designatorToken } from "../lisp/designators";
 import { localBinding } from "../lisp/scope";
 import type { Note } from "../protocol/Note";
 import { appendTranscript, set, useStore } from "../store";
@@ -92,10 +93,31 @@ export function loadFile(view: EditorView): boolean {
   return true;
 }
 
+/**
+ * Shows the REPL and puts the cursor at the end of its input, scrolled to the
+ * prompt. A REPL hidden behind another panel tab renders on the next frames.
+ */
 export function showRepl(): boolean {
   set({ bottom: "repl" });
-  (document.querySelector("[data-testid=repl-input] .cm-content") as HTMLElement | null)?.focus();
+  const focus = (tries: number) => {
+    const dom = document.querySelector("[data-testid=repl-input] .cm-editor");
+    const view = dom instanceof HTMLElement ? EditorView.findFromDOM(dom) : null;
+    if (!view) return void (tries > 0 && requestAnimationFrame(() => focus(tries - 1)));
+    view.focus();
+    view.dispatch({ selection: { anchor: view.state.doc.length }, effects: EditorView.scrollIntoView(view.state.doc.length, { y: "end" }) });
+  };
+  focus(20);
   return true;
+}
+
+/** Goes to the REPL, or from the REPL back to the editor last used, as SLIME's C-c C-z does. */
+export function toggleRepl(): boolean {
+  const inRepl = document.activeElement instanceof Element && document.activeElement.closest(".repl");
+  if (inRepl && activeEditor.view) {
+    activeEditor.view.focus();
+    return true;
+  }
+  return showRepl();
 }
 
 function evaluate(view: EditorView, form: { from: number; to: number; text: string }): boolean {
@@ -300,10 +322,43 @@ function completionType(flags: string): string {
   return "text";
 }
 
+/**
+ * Package or system names for a name being typed where one belongs: packages
+ * Lisp has, the project's systems and dependencies, and systems the catalogs
+ * list, so a dependency completes before it is loaded.
+ */
+async function designatorCompletions(kind: "package" | "system", prefix: string, from: number): Promise<CompletionResult> {
+  const s = useStore.getState();
+  const names = new Map<string, string>();
+  const add = (name: string, detail: string) => {
+    const n = name.toLowerCase();
+    if (!names.has(n)) names.set(n, detail);
+  };
+  if (kind === "package") for (const p of s.packages) add(p, "package");
+  for (const sys of s.systems) add(sys.name, "project");
+  for (const d of s.deps) add(d.name, d.source === "missing" ? "dependency" : `${d.source} dependency`);
+  if (prefix.length >= 2) {
+    const r = await actions.lisp({ op: "findSystems", query: prefix }).catch(() => null);
+    if (r?.kind === "systems") for (const sys of r.items) add(sys.name, sys.source === "quicklisp" ? "Quicklisp system" : "system");
+  }
+  const options: Completion[] = [...names].map(([label, detail]) => ({ label, detail, type: kind === "package" ? "namespace" : "class" }));
+  return { from, options, validFor: /^[\w.+/-]*$/ };
+}
+
 export async function lispCompletions(ctx: CompletionContext): Promise<CompletionResult | null> {
   const lisp = lispText(ctx.state, ctx.pos);
   if (!lisp) return null;
   const { text, pos } = lisp;
+  const token = designatorToken(text, pos);
+  if (token && (token.prefix.length >= 1 || ctx.explicit)) {
+    const r = await actions.lisp({ op: "designatorAt", text: token.form }).catch(() => null);
+    if (ctx.aborted) return null;
+    const kind = r?.kind === "text" ? r.text : null;
+    if (kind === "package" || kind === "system") {
+      const result = await designatorCompletions(kind, token.prefix, ctx.pos - (pos - token.from));
+      return ctx.aborted ? null : result;
+    }
+  }
   let from = pos;
   while (from > 0 && isSymbolChar(text[from - 1])) from--;
   const prefix = text.slice(from, pos).replace(/^#'/, "");
@@ -400,7 +455,10 @@ export function notesToDiagnostics(notes: Note[], text: string): Diagnostic[] {
         severity: n.severity === "error" || n.severity === "read-error" ? "error" : n.severity === "warning" || n.severity === "style-warning" ? "warning" : "info",
         message: n.message,
         source: "SBCL",
-        actions: [{ name: "Ask AI to fix", apply: (view, from) => void askToFix(view, from, n) }],
+        actions: [
+          { name: "Copy", apply: () => void navigator.clipboard.writeText(n.message) },
+          { name: "Ask AI to fix", apply: (view, from) => void askToFix(view, from, n) },
+        ],
       } satisfies Diagnostic;
     });
 }

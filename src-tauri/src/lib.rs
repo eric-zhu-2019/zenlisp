@@ -91,9 +91,32 @@ fn resources_dir(app: &tauri::App) -> PathBuf {
     }
 }
 
-/// macOS's standard menus, with ZenLisp's own Help items in front of the system's search field.
-fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+/// The File menu's Open Recent submenu, rebuilt whenever the UI's list of recent projects changes.
+struct RecentMenu(Submenu<tauri::Wry>);
+
+/// macOS's standard menus, with project items at the top of File and ZenLisp's
+/// own Help items in front of the system's search field.
+fn menu(app: &tauri::AppHandle) -> tauri::Result<(Menu<tauri::Wry>, Submenu<tauri::Wry>)> {
     let menu = Menu::default(app)?;
+    let recent = Submenu::with_id(app, "open-recent", "Open Recent", true)?;
+    let file = match menu.items()?.into_iter().find_map(|i| i.as_submenu().cloned().filter(|s| s.text().is_ok_and(|t| t == "File"))) {
+        Some(f) => f,
+        None => {
+            let f = Submenu::new(app, "File", true)?;
+            menu.insert(&f, 1)?;
+            f
+        }
+    };
+    let project_items: [&dyn tauri::menu::IsMenuItem<tauri::Wry>; 5] = [
+        &MenuItem::with_id(app, "new-project", "New Project…", true, Some("CmdOrCtrl+Shift+N"))?,
+        &MenuItem::with_id(app, "open-project", "Open Project…", true, Some("CmdOrCtrl+O"))?,
+        &recent,
+        &MenuItem::with_id(app, "close-project", "Close Project", true, None::<&str>)?,
+        &PredefinedMenuItem::separator(app)?,
+    ];
+    for (i, item) in project_items.into_iter().enumerate() {
+        file.insert(item, i)?;
+    }
     // The app menu comes first; Settings goes after About, as in every Mac app.
     if let Some(app_menu) = menu.items()?.into_iter().next().and_then(|i| i.as_submenu().cloned()) {
         let updates = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
@@ -121,7 +144,32 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     }
     help.append(&PredefinedMenuItem::separator(app)?)?;
     help.append(&report)?;
-    Ok(menu)
+    Ok((menu, recent))
+}
+
+/// Fills Open Recent with the UI's recent projects, newest first.
+#[tauri::command]
+fn set_recent_projects(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+    let state = app.state::<RecentMenu>();
+    let recent = &state.0;
+    let fill = || -> tauri::Result<()> {
+        for item in recent.items()? {
+            recent.remove(&item)?;
+        }
+        if paths.is_empty() {
+            recent.append(&MenuItem::new(&app, "No Recent Projects", false, None::<&str>)?)?;
+            return Ok(());
+        }
+        let home = std::env::var("HOME").unwrap_or_default();
+        for path in &paths {
+            let shown = if !home.is_empty() && path.starts_with(&home) { format!("~{}", &path[home.len()..]) } else { path.clone() };
+            recent.append(&MenuItem::with_id(&app, format!("recent:{path}"), shown, true, None::<&str>)?)?;
+        }
+        recent.append(&PredefinedMenuItem::separator(&app)?)?;
+        recent.append(&MenuItem::with_id(&app, "recent-clear", "Clear Menu", true, None::<&str>)?)?;
+        Ok(())
+    };
+    fill().map_err(|e| e.to_string())
 }
 
 fn percent_decode(path: &str) -> String {
@@ -145,6 +193,8 @@ fn percent_decode(path: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // SAFETY: no other thread exists yet. Without it, ocicl, qlot and Homebrew's SBCL are not found.
+    unsafe { zenlisp_core::project::use_tool_path() };
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -191,7 +241,9 @@ pub fn run() {
                 });
             }
             app.manage(Updates { enabled, ..Default::default() });
-            app.set_menu(menu(app.handle())?)?;
+            let (bar, recent) = menu(app.handle())?;
+            app.set_menu(bar)?;
+            app.manage(RecentMenu(recent));
             app.on_menu_event(|app, event| {
                 if event.id().0 == "check-updates" {
                     tauri::async_runtime::spawn(check_for_update(app.clone(), true));
@@ -201,7 +253,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![rpc, quit, install_update])
+        .invoke_handler(tauri::generate_handler![rpc, quit, install_update, set_recent_projects])
         .build(tauri::generate_context!())
         .expect("error while building ZenLisp")
         .run(|app, event| {

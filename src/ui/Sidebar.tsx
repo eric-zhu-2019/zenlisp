@@ -8,6 +8,9 @@ import { DependencyPicker } from "./Dependencies";
 import { set, useStore } from "../store";
 import { revealInFinder } from "../platform";
 import { Icon } from "./Icon";
+import { PackagesPanel } from "./Packages";
+import { EdgeHandle } from "./EdgeHandle";
+import { SIDEBAR_WIDTH, updateSettings, useSettings } from "../settings";
 import { SearchPanel } from "./Search";
 
 const GIT_LETTER: Record<GitState, string> = { modified: "M", added: "A", deleted: "D", renamed: "R", untracked: "U", conflicted: "!" };
@@ -247,6 +250,7 @@ export function Sidebar() {
   const systems = useStore((s) => s.systems);
   const sidebar = useStore((s) => s.sidebar);
   const [adding, setAdding] = useState<SystemInfo | null>(null);
+  const sidebarWidth = useSettings((s) => s.sidebarWidth);
   if (!project) return <aside className="sidebar" />;
 
   const canInstall = project.managers.some((m) => m.kind === "qlot" || m.kind === "ocicl");
@@ -254,6 +258,15 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
+      <EdgeHandle
+        side="right"
+        label="Sidebar width"
+        width={sidebarWidth}
+        min={180}
+        max={() => Math.min(640, window.innerWidth * 0.45)}
+        fallback={SIDEBAR_WIDTH}
+        onResize={(sidebarWidth) => updateSettings({ sidebarWidth })}
+      />
       <div className="sidebar-modes">
         <button className={sidebar === "files" ? "on" : ""} onClick={() => set({ sidebar: "files" })}>
           Files
@@ -261,8 +274,11 @@ export function Sidebar() {
         <button className={sidebar === "search" ? "on" : ""} title="Search project (⇧⌘F)" onClick={() => set({ sidebar: "search" })}>
           Search
         </button>
+        <button className={sidebar === "packages" ? "on" : ""} title="Dependencies of the project's systems" onClick={() => set({ sidebar: "packages" })}>
+          Packages
+        </button>
       </div>
-      {sidebar === "files" ? <FileTree root={project.root} /> : <SearchPanel />}
+      {sidebar === "files" ? <FileTree root={project.root} /> : sidebar === "search" ? <SearchPanel /> : <PackagesPanel />}
       <div className="section" style={{ maxHeight: "45%", borderTop: "1px solid var(--border)" }}>
         <div className="section-header">
           <span className="grow">Systems</span>
@@ -310,8 +326,13 @@ export function Sidebar() {
                 </button>
               </div>
               <div className="actions">
+                {s.entryPoint && (
+                  <button className="btn" title={`Load ${s.name} and call ${s.entryPoint} in the REPL`} onClick={() => actions.runSystem(s)}>
+                    <Icon name="play" size={11} /> Run
+                  </button>
+                )}
                 <button className="btn" onClick={() => actions.loadSystem(s.name).then(() => setTimeout(actions.refreshSystems, 500))}>
-                  <Icon name="play" size={11} /> Load
+                  <Icon name="download" size={11} /> Load
                 </button>
                 <button className="btn" onClick={() => actions.testSystem(s.name)}>
                   <Icon name="check" size={11} /> Test

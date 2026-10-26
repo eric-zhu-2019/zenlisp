@@ -1,5 +1,5 @@
 use crate::sexp::Sexp;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
@@ -29,6 +29,18 @@ pub struct Project {
     pub managers: Vec<DepManager>,
 }
 
+/// How a new project gets its dependencies.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum NewDeps {
+    /// The global Quicklisp, fetching on load.
+    #[default]
+    Quicklisp,
+    /// ocicl, with versions pinned in the project's `ocicl.csv`.
+    Ocicl,
+}
+
 const VENDOR_DIRS: [&str; 4] = ["vendor", "lib", "third_party", "deps"];
 
 fn home() -> PathBuf {
@@ -41,6 +53,40 @@ pub fn quicklisp_setup() -> Option<PathBuf> {
         .into_iter()
         .find(|p| p.is_file())
 }
+
+/// `path` with the folders command line Lisp tools install to added after it:
+/// Homebrew's, ~/.local/bin (ocicl), ~/.roswell/bin and ~/.qlot/bin (qlot).
+/// Apps opened from the Finder get only /usr/bin:/bin:/usr/sbin:/sbin.
+pub fn tool_path(path: &str, home: &Path) -> String {
+    let mut dirs: Vec<String> = path.split(':').filter(|d| !d.is_empty()).map(String::from).collect();
+    let extra = [
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/opt/homebrew/sbin"),
+        PathBuf::from("/usr/local/bin"),
+        home.join(".local/bin"),
+        home.join(".roswell/bin"),
+        home.join(".qlot/bin"),
+    ];
+    for d in extra {
+        let d = d.display().to_string();
+        if !dirs.contains(&d) {
+            dirs.push(d);
+        }
+    }
+    dirs.join(":")
+}
+
+/// Gives this process, and every program it starts, the tool folders of [`tool_path`].
+///
+/// # Safety
+/// Call it before any other thread starts, as changing the environment requires.
+pub unsafe fn use_tool_path() {
+    let path = std::env::var("PATH").unwrap_or_default();
+    // SAFETY: the caller runs this before other threads exist.
+    unsafe { std::env::set_var("PATH", tool_path(&path, &home())) };
+}
+
+pub const OCICL_MISSING: &str = "ocicl is not set up. Install it with `brew install ocicl`, then run `ocicl setup`.";
 
 pub fn ocicl_runtime() -> Option<PathBuf> {
     let p = home().join(".local/share/ocicl/ocicl-runtime.lisp");
@@ -84,9 +130,10 @@ impl Project {
         if !vendor.is_empty() {
             managers.push(DepManager::Vendor { dirs: vendor });
         }
-        // qlot ships its own Quicklisp, so the global one would shadow it.
-        let has_qlot = managers.iter().any(|m| matches!(m, DepManager::Qlot { .. }));
-        if !has_qlot {
+        // qlot ships its own Quicklisp, and ocicl fetches what loads ask for, so the
+        // global Quicklisp would shadow either and fetch from its own dists instead.
+        let own = managers.iter().any(|m| matches!(m, DepManager::Qlot { .. } | DepManager::Ocicl { .. }));
+        if !own {
             if let Some(setup) = quicklisp_setup() {
                 managers.push(DepManager::Quicklisp { setup: setup.display().to_string() });
             }
@@ -156,6 +203,32 @@ impl Project {
         })
     }
 
+    /// The shell command that updates one dependency to its latest release, for
+    /// managers that pin each one. Quicklisp updates whole dists only.
+    pub fn update_one_command(&self, system: &str) -> Option<Vec<String>> {
+        self.managers.iter().find_map(|m| match m {
+            DepManager::Qlot { .. } => Some(vec!["qlot".into(), "update".into(), system.into()]),
+            DepManager::Ocicl { .. } => Some(vec!["ocicl".into(), "latest".into(), system.into()]),
+            _ => None,
+        })
+    }
+
+    /// The shell command that pins a dependency to VERSION, for ocicl.
+    pub fn pin_command(&self, system: &str, version: &str) -> Option<Vec<String>> {
+        self.managers.iter().find_map(|m| match m {
+            DepManager::Ocicl { .. } => Some(vec!["ocicl".into(), "install".into(), format!("{system}:{version}")]),
+            _ => None,
+        })
+    }
+
+    /// The shell command that drops a dependency's pin and download, for ocicl.
+    pub fn unpin_command(&self, system: &str) -> Option<Vec<String>> {
+        self.managers.iter().find_map(|m| match m {
+            DepManager::Ocicl { .. } => Some(vec!["ocicl".into(), "remove".into(), system.into()]),
+            _ => None,
+        })
+    }
+
     /// The shell command that fetches a newly declared dependency.
     pub fn fetch_command(&self, system: &str) -> Option<Vec<String>> {
         self.managers.iter().find_map(|m| match m {
@@ -166,11 +239,15 @@ impl Project {
     }
 }
 
-/// Creates a new ASDF project with a package, a main file and a test system.
-pub fn create(parent: &Path, name: &str) -> std::io::Result<PathBuf> {
+/// Creates a new ASDF project with a package, a main file and a test system,
+/// and for ocicl an empty `ocicl.csv` that `ocicl install` fills.
+pub fn create(parent: &Path, name: &str, deps: NewDeps) -> std::io::Result<PathBuf> {
     let valid = !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
     if !valid {
         return Err(std::io::Error::other("project names use lowercase letters, digits and dashes"));
+    }
+    if deps == NewDeps::Ocicl && ocicl_runtime().is_none() {
+        return Err(std::io::Error::other(OCICL_MISSING));
     }
     let root = parent.join(name);
     if root.exists() {
@@ -234,8 +311,13 @@ pub fn create(parent: &Path, name: &str) -> std::io::Result<PathBuf> {
 "#
             ),
         ),
-        (".gitignore".into(), "*.fasl\nbin/\n.qlot/\n".into()),
+        (".gitignore".into(), "*.fasl\nbin/\n.qlot/\nocicl/\n".into()),
     ];
+    // ocicl.csv records each system's exact version; ocicl/ is what `ocicl install` downloads.
+    let files: Vec<(String, String)> = match deps {
+        NewDeps::Ocicl => files.into_iter().chain([("ocicl.csv".to_string(), String::new())]).collect(),
+        NewDeps::Quicklisp => files.into_iter().collect(),
+    };
     for (path, body) in files {
         std::fs::write(root.join(path), body)?;
     }
@@ -274,11 +356,40 @@ mod tests {
     }
 
     #[test]
+    fn tool_folders_follow_the_path_once() {
+        let home = Path::new("/Users/me");
+        let path = tool_path("/usr/bin:/bin:/opt/homebrew/bin", home);
+        assert!(path.starts_with("/usr/bin:/bin:/opt/homebrew/bin:"), "the path as it was comes first: {path}");
+        assert_eq!(path.matches("/opt/homebrew/bin").count(), 1, "{path}");
+        assert!(path.contains("/Users/me/.local/bin") && path.contains("/Users/me/.roswell/bin"), "{path}");
+    }
+
+    #[test]
     fn creates_projects_and_rejects_bad_names() {
         let parent = tmp("create");
-        let root = create(&parent, "hello-zen").unwrap();
+        let root = create(&parent, "hello-zen", NewDeps::Quicklisp).unwrap();
         assert!(root.join("hello-zen.asd").is_file());
-        assert!(create(&parent, "hello-zen").is_err());
-        assert!(create(&parent, "Bad Name").is_err());
+        assert!(!root.join("ocicl.csv").exists());
+        assert!(create(&parent, "hello-zen", NewDeps::Quicklisp).is_err());
+        assert!(create(&parent, "Bad Name", NewDeps::Quicklisp).is_err());
+    }
+
+    #[test]
+    fn an_ocicl_project_pins_its_dependencies_and_leaves_quicklisp_out() {
+        let parent = tmp("create-ocicl");
+        match create(&parent, "oc-zen", NewDeps::Ocicl) {
+            Ok(root) => {
+                assert!(root.join("ocicl.csv").is_file());
+                let managers = Project::detect(&root).managers;
+                assert!(managers.iter().any(|m| matches!(m, DepManager::Ocicl { .. })), "{managers:?}");
+                assert!(!managers.iter().any(|m| matches!(m, DepManager::Quicklisp { .. })), "{managers:?}");
+            }
+            // Without ocicl set up nothing is created, and the message says how to set it up.
+            Err(e) => {
+                assert!(ocicl_runtime().is_none());
+                assert_eq!(e.to_string(), OCICL_MISSING);
+                assert!(!parent.join("oc-zen").exists());
+            }
+        }
     }
 }

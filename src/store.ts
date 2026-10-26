@@ -12,6 +12,7 @@ import type { TraceEntry } from "./protocol/TraceEntry";
 import type { Status } from "./protocol/Status";
 import type { Span } from "./protocol/Span";
 import type { SystemInfo } from "./protocol/SystemInfo";
+import type { Dependency } from "./protocol/Dependency";
 import type { Thread } from "./protocol/Thread";
 
 export type TranscriptItem =
@@ -53,7 +54,7 @@ export type ExtraRepl = {
   busy: boolean;
 };
 
-export type SidebarMode = "files" | "search";
+export type SidebarMode = "files" | "search" | "packages";
 
 export type Dialog = {
   title: string;
@@ -114,6 +115,10 @@ export interface State {
   tasks: Record<string, Task>;
   activeTask: string | null;
   systems: SystemInfo[];
+  /** What the project's systems depend on, with where each comes from. */
+  deps: Dependency[];
+  /** Markdown files shown rendered rather than as text. */
+  previews: string[];
   /** Every open file's buffer, whichever panes show it. */
   tabs: Tab[];
   /** One pane, or two side by side. */
@@ -187,6 +192,8 @@ export const useStore = create<State>(() => ({
   tasks: {},
   activeTask: null,
   systems: [],
+  deps: [],
+  previews: [],
   tabs: [],
   panes: [{ tabs: [], active: null }],
   focusedPane: 0,
@@ -301,9 +308,11 @@ export function reduce(s: State, e: AppEvent): Partial<State> {
       return { package: ev.name };
     case "debug": {
       const key = threadKey(ev.thread);
+      // Swank names every interrupt as coming from Emacs, SLIME's home.
+      const condition = ev.condition.replace(/^Interrupt from Emacs/, "Interrupted");
       const levels = (s.debuggers[key] ?? []).filter((d) => d.level < ev.level);
       return {
-        debuggers: { ...s.debuggers, [key]: [...levels, ev] },
+        debuggers: { ...s.debuggers, [key]: [...levels, { ...ev, condition }] },
         lastDebugThread: key,
         debugSpot: null,
         // The debugger shows beside the REPL; a stop elsewhere would go unseen.
@@ -316,7 +325,7 @@ export function reduce(s: State, e: AppEvent): Partial<State> {
             kind: "condition",
             thread: ev.thread,
             level: ev.level,
-            condition: ev.condition,
+            condition,
             type: ev.conditionType.trim(),
           },
         ],

@@ -1,4 +1,5 @@
 import { backend } from "./backend";
+import { afterSave, beforeSave } from "./plugins";
 import type { Op } from "./protocol/Op";
 import type { Reply } from "./protocol/Reply";
 import type { Request } from "./protocol/Request";
@@ -12,6 +13,8 @@ import { pickFolder, rememberProject } from "./platform";
 import { markTour, offerTour } from "./tour";
 import type { Debugger } from "./protocol/Debugger";
 import type { EditorContext } from "./protocol/EditorContext";
+import { chatFromHistory } from "./ui/chatHistory";
+import type { NewDeps } from "./protocol/NewDeps";
 import type { Note } from "./protocol/Note";
 import { useSettings } from "./settings";
 import type { SystemInfo } from "./protocol/SystemInfo";
@@ -47,7 +50,7 @@ export async function request(req: Request) {
 const CHANGES_CODE = new Set(["eval", "replEval", "compileForm", "compileFile", "loadFile"]);
 
 /** Debugger controls leave the debugger by unwinding, so Swank answers them with an abort. */
-const UNWINDS = new Set(["invokeRestart", "step", "debuggerAbort", "debuggerContinue", "restartFrame", "returnFromFrame"]);
+const UNWINDS = new Set(["invokeRestart", "step", "debuggerAbort", "debuggerTopLevel", "debuggerContinue", "restartFrame", "returnFromFrame"]);
 
 export async function lisp(op: Op): Promise<Reply> {
   if (CHANGES_CODE.has(op.op)) forgetDocs();
@@ -113,16 +116,28 @@ export async function refreshPackages() {
 }
 
 /** Runs `input` in the REPL; `shown` is how the transcript shows it, when that differs. */
+/** Inputs the main REPL is running, waiting in the debugger or for typed input included. */
+let replRunning = 0;
+
 export async function replEval(input: string, shown = input) {
   markTour("repl");
   appendTranscript({ kind: "input", text: shown, package: get().package });
   set({ bottom: "repl" });
-  await lisp({ op: "replEval", input });
+  replRunning++;
+  try {
+    await lisp({ op: "replEval", input });
+  } finally {
+    replRunning--;
+  }
 }
 
-/** Interrupts the REPL on show: the main one, or an extra REPL's thread. */
+/**
+ * Interrupts the REPL on show: the main one, or an extra REPL's thread. An
+ * idle REPL is left alone; interrupting it would only open the debugger.
+ */
 export async function interrupt() {
   const extra = activeExtraRepl();
+  if (extra ? !extra.busy : replRunning === 0) return flash("Nothing is running in the REPL");
   if (extra?.thread != null) return void (await lisp({ op: "interruptThread", thread: { id: extra.thread } }));
   await lisp({ op: "interrupt" });
 }
@@ -177,6 +192,8 @@ export async function setPackage(name: string) {
 export async function openProject(root: string) {
   const r = await request({ type: "openProject", root });
   if (r.type === "project") {
+    // The root as the backend names it, so the project menu can tell it is the open one.
+    rememberProject(r.project.root);
     set({ tabs: [], ...emptyPanes(), notes: {} });
     appendTranscript({ kind: "notice", tone: "info", text: `Opened ${r.project.name}` });
     markTour("project");
@@ -186,37 +203,110 @@ export async function openProject(root: string) {
   }
 }
 
+/**
+ * Whether the open project may be left: true when nothing is unsaved, or once
+ * the user saves or discards the unsaved files; false when they cancel.
+ */
+export function leaveProject(): Promise<boolean> {
+  const project = get().status.project;
+  const dirty = dirtyTabs();
+  if (!project || dirty.length === 0) return Promise.resolve(true);
+  return new Promise((resolve) =>
+    ask(`Save changes to ${project.name} first?`, `Unsaved: ${dirty.map((t) => t.name).join(", ")}.`, [
+      { label: "Save All", kind: "primary", run: () => void saveAll().then(() => resolve(true)) },
+      { label: "Don't Save", kind: "danger", run: () => resolve(true) },
+      { label: "Cancel", run: () => resolve(false) },
+    ]),
+  );
+}
+
 export async function requestOpenProject(root?: string) {
   const dir = root ?? (await pickFolder("Open Lisp Project"));
-  if (!dir) return;
-  rememberProject(dir);
+  if (!dir || !(await leaveProject())) return;
   await openProject(dir);
 }
 
-export async function newProject(parent: string, name: string) {
-  const r = await request({ type: "newProject", parent, name });
-  if (r.type === "project") {
-    markTour("project");
-    offerTour();
-    await Promise.all([refreshSystems(), refreshStatus(), refreshPackages()]);
-    void refreshGit();
-    await openFile(`${r.project.root}/src/main.lisp`);
-  }
+/** Creates and opens a project; false when the user chose to stay in the open one. */
+export async function newProject(parent: string, name: string, deps: NewDeps = "quicklisp") {
+  if (!(await leaveProject())) return false;
+  const r = await request({ type: "newProject", parent, name, deps });
+  if (r.type !== "project") return false;
+  rememberProject(r.project.root);
+  set({ tabs: [], ...emptyPanes(), notes: {} });
+  markTour("project");
+  offerTour();
+  await Promise.all([refreshSystems(), refreshStatus(), refreshPackages()]);
+  void refreshGit();
+  await openFile(`${r.project.root}/src/main.lisp`);
+  return true;
 }
 
 export async function closeProject() {
+  if (!(await leaveProject())) return;
   await request({ type: "closeProject" });
   set({ tabs: [], ...emptyPanes(), notes: {}, systems: [], transcript: [], inspector: null, debuggers: {}, right: null });
 }
 
 export async function refreshSystems() {
   const r = await request({ type: "projectSystems" });
-  if (r.type === "systems") set({ systems: r.systems });
+  if (r.type !== "systems") return;
+  set({ systems: r.systems });
+  await refreshDependencies();
+}
+
+/** The systems the project's own systems depend on, each once, by name. */
+export function dependencyNames(systems: SystemInfo[]) {
+  const own = new Set(systems.map((s) => s.name));
+  return [...new Set(systems.flatMap((s) => s.dependsOn))].filter((n) => !own.has(n)).sort();
+}
+
+export async function refreshDependencies() {
+  const names = dependencyNames(get().systems);
+  if (names.length === 0) return set({ deps: [] });
+  const r = await backend.request({ type: "dependencies", names }).catch(() => null);
+  if (r?.type === "dependencies") set({ deps: r.deps });
+}
+
+/** Whether the project's manager updates one dependency at a time: qlot and ocicl do, Quicklisp does dists. */
+export const updatesOne = () => usesProgramManager();
+
+/** Updates one dependency, or with Quicklisp the dists that hold every one. */
+export async function updateDependency(name: string) {
+  if (!updatesOne()) return updateDeps();
+  set({ bottom: "output" });
+  await runTask(`update ${name}`, { type: "updateDependency", name });
+}
+
+export async function dependencyVersions(name: string) {
+  const r = await request({ type: "dependencyVersions", name });
+  return r.type === "dependencyVersions" ? r.versions : [];
+}
+
+export async function pinDependency(name: string, version: string) {
+  set({ bottom: "output" });
+  await runTask(`pin ${name} ${version}`, { type: "pinDependency", name, version });
+}
+
+/** Removes `name` from every project system that depends on it, then, with ocicl, its pin. */
+export async function dropDependency(name: string) {
+  for (const system of get().systems.filter((s) => s.dependsOn.includes(name))) await removeDependency(system, name);
+  if (get().status.project?.managers.some((m) => m.kind === "ocicl")) {
+    set({ bottom: "output" });
+    await runTask(`unpin ${name}`, { type: "unpinDependency", name });
+  }
+  await refreshSystems();
 }
 
 function runTask(task: string, req: Request) {
   set((s) => ({ tasks: { ...s.tasks, [task]: { output: "", running: true, ok: null } }, activeTask: task }));
   return request(req);
+}
+
+/** Runs a system's entry point in the REPL, loading the system first, as its built program would start. */
+export function runSystem(system: SystemInfo) {
+  if (!system.entryPoint) return;
+  set({ bottom: "repl" });
+  replEval(`(progn (zenlisp:load-system ${lispString(system.name)}) (uiop:call-function ${lispString(system.entryPoint)}))`);
 }
 
 export const loadSystem = (name: string) => runTask(`load ${name}`, { type: "loadSystem", name });
@@ -398,6 +488,21 @@ export async function goForward() {
   await openFile(to.path, to.offset);
 }
 
+export async function assistantSessions() {
+  const r = await request({ type: "assistantSessions" });
+  return r.type === "assistantSessions" ? r.sessions : [];
+}
+
+/** Continues a saved conversation: the chat shows it, and the next message carries it on. */
+export async function openAssistantSession(id: string) {
+  const r = await request({ type: "assistantOpenSession", id });
+  if (r.type === "assistantSession") set({ chat: chatFromHistory(r.messages), chatBusy: false });
+}
+
+export async function deleteAssistantSession(id: string) {
+  await request({ type: "assistantDeleteSession", id });
+}
+
 /** Sends `text` to the assistant, with the editor's context when there is one, as the chat's Send does. */
 export async function askAssistant(text: string, context: EditorContext | null) {
   set((s) => ({ chat: [...s.chat, { id: Date.now(), role: "user", text }] }));
@@ -443,6 +548,11 @@ async function loadTab(path: string): Promise<Tab | null> {
     .then((h) => h.type === "gitHead" && set((s) => ({ gitHeads: { ...s.gitHeads, [path]: h.text } })))
     .catch(() => null);
   return get().tabs.find((t) => t.path === path) ?? tab;
+}
+
+/** Shows a Markdown file rendered, or as text again. */
+export function togglePreview(path: string) {
+  set((s) => ({ previews: s.previews.includes(path) ? s.previews.filter((p) => p !== path) : [...s.previews, path] }));
 }
 
 /** Opens `path` in a pane, the focused one by default, and focuses it there. */
@@ -500,7 +610,6 @@ export function ask(title: string, message: string, actions: NonNullable<ReturnT
   set({ dialog: { title, message, actions: actions.map((a) => ({ ...a, run: () => (set({ dialog: null }), a.run()) })) } });
 }
 
-/** Closes a tab, asking first when it has unsaved changes. */
 /** Closes a file in a pane, asking first when that loses unsaved changes. */
 export function requestCloseTab(path: string, pane = get().focusedPane) {
   const tab = get().tabs.find((t) => t.path === path);
@@ -632,15 +741,80 @@ export function toggleDiff(path: string) {
 export async function saveTab(path: string, { compileChanges = true } = {}) {
   const tab = get().tabs.find((t) => t.path === path);
   if (!tab) return;
-  const before = tab.saved;
-  await request({ type: "writeFile", path, content: tab.text });
-  set((s) => ({ tabs: s.tabs.map((t) => (t.path === path ? { ...t, saved: tab.text, conflict: null } : t)) }));
+  if (readOnlyFile(path)) return flash(`${tab.name} is outside the project, so it is read-only`, "error");
+  const text = await beforeSave(path, tab.text);
+  await request({ type: "writeFile", path, content: text });
+  set((s) => ({ tabs: s.tabs.map((t) => (t.path === path ? { ...t, saved: text, conflict: null } : t)) }));
   void refreshGit();
-  if (compileChanges && useSettings.getState().compileOnSave) void compileChangedForms(path, before, tab.text);
+  void afterSave(path);
+  if (compileChanges && useSettings.getState().compileOnSave && inProject(path)) void inOrder(path, () => compileChangedForms(path, text));
+}
+
+const compiling = new Map<string, Promise<void>>();
+
+/**
+ * Runs compiles of one file one after another. A save is followed by the
+ * watcher's report of that same write; run after it, that finds nothing new.
+ */
+function inOrder(path: string, run: () => Promise<void>) {
+  const next = (compiling.get(path) ?? Promise.resolve()).then(run, run);
+  compiling.set(path, next);
+  return next;
+}
+
+/**
+ * Records the project files that loaded systems consist of, as on disk now,
+ * since that is what Lisp loaded. Their later changes compile form by form.
+ */
+let tracking: Promise<void> = Promise.resolve();
+
+export function trackLoadedFiles() {
+  tracking = tracking.then(recordLoadedFiles, recordLoadedFiles);
+  return tracking;
+}
+
+async function recordLoadedFiles() {
+  const root = get().status.project?.root;
+  if (!root || get().status.session.state !== "ready") return;
+  // Which systems are loaded changes too, and a changed .asd of a loaded one asks for a load.
+  void refreshSystems();
+  const r = await backend.request({ type: "lisp", op: { op: "eval", form: `(zenlisp::loaded-source-files ${lispString(root)})`, package: "COMMON-LISP-USER" } }).catch(() => null);
+  if (r?.type !== "lisp" || r.reply.kind !== "evaluated") return;
+  // The value is a printed Lisp string: quoted, with " and \ escaped and newlines as they are.
+  const listed = r.reply.value.replace(/^"|"$/g, "").replace(/\\(.)/g, "$1").split("\n").filter(Boolean);
+  for (const rel of listed) {
+    const path = `${root}/${rel}`;
+    const file = await backend.request({ type: "readFile", path }).catch(() => null);
+    if (file?.type === "file") compiledAll(path, file.content);
+  }
+}
+
+/**
+ * Compiles what changed in loaded files that something other than ZenLisp
+ * wrote, such as git or another editor. A file with unsaved edits is left to
+ * the conflict it raises; a changed .asd needs a load to take effect.
+ */
+export async function compileOutsideChanges(paths: string[]) {
+  if (!useSettings.getState().compileOnChange || get().status.session.state !== "ready") return;
+  await tracking;
+  for (const path of paths) {
+    const system = get().systems.find((s) => s.file === path && s.loaded);
+    if (system) flash(`${baseName(path)} changed; Load ${system.name} to apply it`);
+    if (!compiledForms.has(path)) continue;
+    const tab = get().tabs.find((t) => t.path === path);
+    if (tab && tab.text !== tab.saved) continue;
+    void inOrder(path, async () => {
+      const r = await backend.request({ type: "readFile", path }).catch(() => null);
+      // A save's own write comes back from the watcher; its forms were just compiled, or just failed to.
+      if (r?.type === "file" && r.content !== lastCompiled.get(path)) await compileChangedForms(path, r.content, " from disk");
+    });
+  }
 }
 
 /** Per file, the text of each top-level form as Lisp last compiled it, or as last saved. */
 const compiledForms = new Map<string, Set<string>>();
+/** Per file, the whole text its changed forms were last compiled from. */
+const lastCompiled = new Map<string, string>();
 
 const formTexts = (text: string) => topLevelForms(text).map((f) => text.slice(f.from, f.to));
 
@@ -655,14 +829,15 @@ export function flash(text: string, tone: "info" | "error" = "info") {
 }
 
 /**
- * Compiles, in file order, the top-level forms of `text` that differ from what
- * Lisp last compiled, or from the file as it was saved before, so Lisp keeps
- * up with the file without recompiling all of it. A file whose package Lisp
- * lacks belongs to a system not loaded yet, and is left alone.
+ * Compiles, in file order, the top-level forms of `text` that Lisp does not
+ * have, so Lisp keeps up with the file without recompiling all of it. Lisp has
+ * the forms it compiled or loaded; of a file it never loaded it has none, and
+ * the whole file compiles. Forms in a package Lisp lacks are left alone, since
+ * their file needs another file of the project loaded first.
  */
-async function compileChangedForms(path: string, before: string, text: string) {
+async function compileChangedForms(path: string, text: string, source = "") {
   if (!path.endsWith(".lisp") || get().status.session.state !== "ready") return;
-  const baseline = compiledForms.get(path) ?? new Set(formTexts(before));
+  const baseline = compiledForms.get(path) ?? new Set<string>();
   const changed = topLevelForms(text)
     .map((f) => ({ ...f, text: text.slice(f.from, f.to) }))
     .filter((f) => !baseline.has(f.text) && !/^\(\s*(cl:|common-lisp:)?in-package\s/i.test(f.text));
@@ -679,9 +854,11 @@ async function compileChangedForms(path: string, before: string, text: string) {
     else failed.add(f.text);
   }
   compiledForms.set(path, new Set(formTexts(text).filter((t) => !failed.has(t))));
+  lastCompiled.set(path, text);
   if (failed.size) flash(`${failed.size} changed form${failed.size > 1 ? "s" : ""} did not compile; see Problems`, "error");
-  else flash(`Compiled ${done.join(", ")}`);
-  checkSoon(path, 0);
+  else flash(`Compiled ${done.join(", ")}${source}`);
+  // What other files use may have just been defined.
+  for (const t of get().tabs) checkSoon(t.path, 0);
 }
 
 /** A form's name for a message: what it defines, or how it starts. */
@@ -698,11 +875,30 @@ const checkAgain = new Set<string>();
 const packageMissing = (n: Note) => n.severity === "read-error" && /package|does not exist/i.test(n.message);
 
 /**
+ * Whether `path` is in the open project. Files outside it, such as SBCL's own
+ * sources that go to definition opens, belong to code already loaded:
+ * compiling them again redefines Lisp itself, which package locks refuse.
+ */
+export function inProject(path: string) {
+  const root = get().status.project?.root;
+  return !!root && path.startsWith(`${root}/`);
+}
+
+/**
+ * Whether `path` opens read-only: a file outside the open project, such as
+ * SBCL's sources or a library's, reached by go to definition. Saving one would
+ * change the installed SBCL or library under every project.
+ */
+export function readOnlyFile(path: string) {
+  return !!get().status.project && !inProject(path);
+}
+
+/**
  * Checks a file's code shortly after typing stops: its text is compiled, not
  * loaded, and the compiler's warnings replace the file's notes.
  */
 export function checkSoon(path: string, delay = 600) {
-  if (!useSettings.getState().liveCheck || !path.endsWith(".lisp") || get().status.session.state !== "ready") return;
+  if (!useSettings.getState().liveCheck || !path.endsWith(".lisp") || !inProject(path) || get().status.session.state !== "ready") return;
   clearTimeout(checkTimers.get(path));
   checkTimers.set(path, setTimeout(() => void checkNow(path), delay));
 }
@@ -714,7 +910,7 @@ async function checkNow(path: string) {
   checking.add(path);
   try {
     // Straight to the backend: a check that fails has nothing to tell the REPL.
-    const r = await backend.request({ type: "lisp", op: { op: "checkText", text, package: "COMMON-LISP-USER" } }).catch(() => null);
+    const r = await backend.request({ type: "lisp", op: { op: "checkText", text, package: "COMMON-LISP-USER", file: path } }).catch(() => null);
     const still = get().tabs.find((t) => t.path === path)?.text === text;
     if (r?.type === "lisp" && r.reply.kind === "compiled" && still) {
       const notes = r.reply.notes.filter((n) => !packageMissing(n));
@@ -729,6 +925,8 @@ async function checkNow(path: string) {
 export async function compileFile(path: string) {
   await saveTab(path, { compileChanges: false });
   const r = await lisp({ op: "compileFile", path, load: true });
+  // The files it depends on may have loaded first.
+  void trackLoadedFiles();
   if (r.kind === "compiled") {
     const text = get().tabs.find((t) => t.path === path)?.text;
     if (r.success && text !== undefined) compiledAll(path, text);
@@ -837,6 +1035,12 @@ export const invokeRestart = (thread: Thread, level: number, index: number) => (
   markTour("restart"), lisp({ op: "invokeRestart", thread, level, index })
 );
 export const restartFrame = (thread: Thread, frame: number) => (markTour("restart"), lisp({ op: "restartFrame", thread, frame }));
+/** Leaves every debugger, each stopped thread back at its top level. */
+export async function closeDebuggers() {
+  const stopped = Object.values(get().debuggers).map((levels) => levels[levels.length - 1].thread);
+  await Promise.all(stopped.map((thread) => lisp({ op: "debuggerTopLevel", thread })));
+}
+
 export const debuggerAbort = (thread: Thread) => (markTour("restart"), lisp({ op: "debuggerAbort", thread }));
 export const debuggerContinue = (thread: Thread) => lisp({ op: "debuggerContinue", thread });
 export const step = (thread: Thread, frame: number, how: "into" | "over" | "out") => lisp({ op: "step", thread, frame, how });

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import * as actions from "../actions";
-import { openExternal, pickFile, pickFolder, recentProjects, rememberProject } from "../platform";
+import { openExternal, pickFile, pickFolder, recentProjects } from "../platform";
+import type { NewDeps } from "../protocol/NewDeps";
 import { set, useStore } from "../store";
 import { Icon } from "./Icon";
 
@@ -15,9 +16,11 @@ export function TitleBar() {
 
   return (
     <header className="titlebar" data-tauri-drag-region>
-      <span className="project-name" data-tauri-drag-region>
-        {status.project?.name ?? "ZenLisp"}
-      </span>
+      {status.project ? <ProjectMenu name={status.project.name} root={status.project.root} /> : (
+        <span className="project-name" data-tauri-drag-region>
+          ZenLisp
+        </span>
+      )}
       <button
         className="status-pill"
         title={status.session.state === "failed" || status.session.state === "exited" ? status.session.message : "Restart Lisp"}
@@ -55,6 +58,59 @@ export function TitleBar() {
         <Icon name="sparkle" />
       </button>
     </header>
+  );
+}
+
+/** The project's name in the title bar, opening the project choices: as File's, with recent projects. */
+function ProjectMenu({ name, root }: { name: string; root: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent && e.key !== "Escape") return;
+      if (e instanceof MouseEvent && e.target instanceof Element && e.target.closest(".project-menu")) return;
+      setOpen(false);
+    };
+    window.addEventListener("mousedown", close, true);
+    window.addEventListener("keydown", close, true);
+    return () => {
+      window.removeEventListener("mousedown", close, true);
+      window.removeEventListener("keydown", close, true);
+    };
+  }, [open]);
+  const choose = (run: () => void) => () => {
+    setOpen(false);
+    run();
+  };
+  const others = recentProjects().filter((r) => r !== root);
+  return (
+    <div className="project-menu">
+      <button className="project-name" title={root} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {name}
+        <span className="chev">▾</span>
+      </button>
+      {open && (
+        <div className="menu" role="menu">
+          <button role="menuitem" onClick={choose(() => set({ newProject: true }))}>
+            New Project… <span className="kbd">⇧⌘N</span>
+          </button>
+          <button role="menuitem" onClick={choose(() => void actions.requestOpenProject())}>
+            Open Project… <span className="kbd">⌘O</span>
+          </button>
+          {others.length > 0 && <div className="menu-label">Recent</div>}
+          {others.map((r) => (
+            <button key={r} role="menuitem" title={r} onClick={choose(() => void actions.requestOpenProject(r))}>
+              {r.split("/").pop()}
+              <span className="menu-path">{r.replace(/\/[^/]+$/, "")}</span>
+            </button>
+          ))}
+          <div className="menu-sep" />
+          <button role="menuitem" onClick={choose(() => void actions.closeProject())}>
+            Close Project
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -106,7 +162,7 @@ export function Tabs({ pane }: { pane: number }) {
           <div
             key={path}
             className={`tab ${path === active ? "active" : ""} ${over === i ? "drop-before" : ""}`}
-            title={path}
+            title={actions.readOnlyFile(path) ? `${path}\nRead-only: outside the project` : path}
             draggable
             onDragStart={(e) => {
               e.dataTransfer.setData(TAB_DRAG, JSON.stringify({ path, pane }));
@@ -127,6 +183,11 @@ export function Tabs({ pane }: { pane: number }) {
               else actions.showTab(pane, path);
             }}
           >
+            {actions.readOnlyFile(path) && (
+              <span className="tab-lock" aria-label="read-only">
+                <Icon name="lock" size={11} />
+              </span>
+            )}
             {t.name}
             <span
               className={`close ${t.text !== t.saved ? "is-dirty" : ""}`}
@@ -147,15 +208,30 @@ export function Tabs({ pane }: { pane: number }) {
   );
 }
 
+/** A field for a name or a path, which macOS must leave as typed. */
+const PLAIN = { autoCapitalize: "off", autoCorrect: "off", autoComplete: "off", spellCheck: false } as const;
+
+const DEPS_HINT: Record<NewDeps, string> = {
+  quicklisp: "Dependencies come from Quicklisp's dists as systems load.",
+  ocicl: "Each dependency's exact version is pinned in ocicl.csv, and ocicl fetches it from its registry.",
+};
+
 export function NewProjectDialog({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [parent, setParent] = useState("");
+  const [deps, setDeps] = useState<NewDeps>("quicklisp");
+  const [ocicl, setOcicl] = useState<{ ready: boolean; missing: string } | null>(null);
   const [error, setError] = useState("");
-  const valid = /^[a-z][a-z0-9-]*$/.test(name) && parent;
+  const nameOk = /^[a-z][a-z0-9-]*$/.test(name);
+  const valid = nameOk && parent && (deps !== "ocicl" || ocicl?.ready);
 
   useEffect(() => {
     const recent = recentProjects()[0];
     if (recent) setParent(recent.replace(/\/[^/]+\/?$/, ""));
+    actions.request({ type: "newProjectChoices" }).then(
+      (r) => r.type === "newProjectChoices" && setOcicl({ ready: r.ocicl, missing: r.ociclMissing }),
+      () => setOcicl(null),
+    );
   }, []);
 
   return (
@@ -166,9 +242,7 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
         onSubmit={async (e) => {
           e.preventDefault();
           try {
-            await actions.newProject(parent, name);
-            rememberProject(`${parent}/${name}`);
-            onClose();
+            if (await actions.newProject(parent, name, deps)) onClose();
           } catch (err) {
             setError(String(err instanceof Error ? err.message : err));
           }
@@ -176,13 +250,34 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
       >
         <h2>New Lisp Project</h2>
         <label>Name</label>
-        <input type="text" autoFocus placeholder="my-app" value={name} onChange={(e) => setName(e.target.value)} />
+        {/* Names are lowercase, as ASDF systems and their folders conventionally are. */}
+        <input type="text" autoFocus {...PLAIN} placeholder="my-app" value={name} onChange={(e) => setName(e.target.value.toLowerCase())} />
+        {name && !nameOk && <div className="dialog-hint error-hint">Use letters, digits and dashes, starting with a letter.</div>}
         <label>Location</label>
         <div style={{ display: "flex", gap: 6 }}>
-          <input type="text" value={parent} onChange={(e) => setParent(e.target.value)} placeholder="/Users/you/projects" />
+          <input type="text" {...PLAIN} value={parent} onChange={(e) => setParent(e.target.value)} placeholder="/Users/you/projects" />
           <button type="button" className="btn" onClick={async () => setParent((await pickFolder("Choose Location")) ?? parent)}>
             Choose…
           </button>
+        </div>
+        {!parent && <div className="dialog-hint">Choose the folder the project goes in.</div>}
+        <label>Dependencies</label>
+        <div className="segmented" role="radiogroup" aria-label="Dependencies">
+          {(["quicklisp", "ocicl"] as const).map((d) => (
+            <button
+              key={d}
+              type="button"
+              role="radio"
+              aria-checked={deps === d}
+              className={deps === d ? "active" : ""}
+              onClick={() => setDeps(d)}
+            >
+              {d === "quicklisp" ? "Quicklisp" : "ocicl"}
+            </button>
+          ))}
+        </div>
+        <div className="dialog-hint">
+          {deps === "ocicl" && ocicl && !ocicl.ready ? ocicl.missing : DEPS_HINT[deps]}
         </div>
         <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 10 }}>
           Creates an ASDF system with src/, a test system, and an executable build target.
@@ -315,7 +410,8 @@ export function EditorEmpty() {
     ["⌘B", "Compile and load file"],
     ["⇧⌘M", "Macroexpand"],
     ["F12 / gd", "Go to definition"],
-    ["⌘D / K", "Describe symbol"],
+    ["K", "Documentation popup"],
+    ["⌘D", "Describe symbol"],
     ["⌘P", "Open file"],
     ["⇧⌘P", "Commands"],
   ];

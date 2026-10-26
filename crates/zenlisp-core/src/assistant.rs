@@ -83,6 +83,45 @@ pub struct Assistant {
     base_url: String,
     history: Mutex<Vec<Value>>,
     running: Mutex<Option<AbortHandle>>,
+    /// Where conversations are kept, one JSON file each, so they outlive the app.
+    sessions_dir: PathBuf,
+    /// The id of the conversation `history` belongs to.
+    session: Mutex<String>,
+}
+
+/// A saved conversation, as the history menu lists it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SessionInfo {
+    pub id: String,
+    /// The start of its first message.
+    pub title: String,
+    /// The root of the project it was in, if one was open.
+    pub project: Option<String>,
+    /// When it last changed, in seconds since 1970.
+    pub updated: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedSession {
+    #[serde(flatten)]
+    info: SessionInfo,
+    messages: Vec<Value>,
+}
+
+fn new_session_id() -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    format!("{}", now.as_millis())
+}
+
+/// The words of a user message, without the editor context sent before them.
+fn message_text(message: &Value) -> Option<String> {
+    let content = message.get("content")?.as_array()?;
+    if content.iter().any(|b| b.get("type").and_then(Value::as_str) == Some("tool_result")) {
+        return None;
+    }
+    content.iter().rev().find_map(|b| b.get("text").and_then(Value::as_str)).map(String::from)
 }
 
 type Emit = Arc<dyn Fn(AssistantEvent) + Send + Sync>;
@@ -95,6 +134,56 @@ impl Assistant {
             base_url: std::env::var("ANTHROPIC_BASE_URL").unwrap_or_else(|_| "https://api.anthropic.com".into()),
             history: Mutex::new(Vec::new()),
             running: Mutex::new(None),
+            sessions_dir: data_dir.join("assistant-sessions"),
+            session: Mutex::new(new_session_id()),
+        }
+    }
+
+    /// Writes the current conversation, when it has a message, for the history menu to reopen.
+    async fn save(&self, project: Option<String>) {
+        let messages = self.history.lock().await.clone();
+        let Some(title) = messages.iter().find(|m| m.get("role").and_then(Value::as_str) == Some("user")).and_then(message_text) else {
+            return;
+        };
+        let title: String = title.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect();
+        let id = self.session.lock().await.clone();
+        let updated = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or_default();
+        let saved = SavedSession { info: SessionInfo { id: id.clone(), title, project, updated }, messages };
+        let _ = std::fs::create_dir_all(&self.sessions_dir);
+        if let Ok(json) = serde_json::to_vec(&saved) {
+            let _ = std::fs::write(self.sessions_dir.join(format!("{id}.json")), json);
+        }
+    }
+
+    /// Saved conversations, the latest first.
+    pub fn sessions(&self) -> Vec<SessionInfo> {
+        let mut out: Vec<SessionInfo> = std::fs::read_dir(&self.sessions_dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+            .filter_map(|e| serde_json::from_slice::<SavedSession>(&std::fs::read(e.path()).ok()?).ok())
+            .map(|s| s.info)
+            .collect();
+        out.sort_by(|a, b| b.updated.cmp(&a.updated));
+        out
+    }
+
+    /// Continues a saved conversation: its messages become the history the next turn sends.
+    pub async fn open_session(&self, id: &str) -> Result<Vec<Value>, String> {
+        self.cancel().await;
+        let bytes = std::fs::read(self.sessions_dir.join(format!("{id}.json"))).map_err(|_| "That conversation is gone.".to_string())?;
+        let saved: SavedSession = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        *self.history.lock().await = saved.messages.clone();
+        *self.session.lock().await = saved.info.id;
+        Ok(saved.messages)
+    }
+
+    pub async fn delete_session(&self, id: &str) {
+        let _ = std::fs::remove_file(self.sessions_dir.join(format!("{id}.json")));
+        if *self.session.lock().await == id {
+            self.history.lock().await.clear();
+            *self.session.lock().await = new_session_id();
         }
     }
 
@@ -146,9 +235,11 @@ impl Assistant {
         Ok(())
     }
 
+    /// Starts a new conversation; the one before stays saved.
     pub async fn reset(&self) {
         self.cancel().await;
         self.history.lock().await.clear();
+        *self.session.lock().await = new_session_id();
     }
 
     pub async fn cancel(&self) {
@@ -158,7 +249,14 @@ impl Assistant {
     }
 
     /// Starts a turn in the background. Events stream through `emit`.
-    pub async fn send(self: &Arc<Self>, wb: Arc<Workbench>, text: String, context: Option<EditorContext>, emit: Emit) -> Result<(), String> {
+    pub async fn send(
+        self: &Arc<Self>,
+        wb: Arc<Workbench>,
+        text: String,
+        context: Option<EditorContext>,
+        project: Option<String>,
+        emit: Emit,
+    ) -> Result<(), String> {
         let mut running = self.running.lock().await;
         if running.as_ref().is_some_and(|h| !h.is_finished()) {
             return Err("the assistant is still answering".into());
@@ -173,6 +271,7 @@ impl Assistant {
                     "error".into()
                 }
             };
+            me.save(project).await;
             emit(AssistantEvent::TurnFinished { stop_reason });
         });
         *running = Some(task.abort_handle());

@@ -2,8 +2,10 @@
 // window shortcuts and the help screen are all built from this table.
 
 import type { KeyBinding } from "@codemirror/view";
+import { runPluginCommand, usePlugins } from "./plugins";
 import type { EditorView } from "@codemirror/view";
 import * as actions from "./actions";
+import { inTauri } from "./backend";
 import {
   compileFile,
   compileForm,
@@ -19,10 +21,12 @@ import {
   loadFile,
   macroexpand,
   profileAtCursor,
-  showRepl,
+  toggleRepl,
   toggleTraceAtCursor,
   viewPath,
 } from "./editor/commands";
+import { showDocTip } from "./editor/hover";
+import { isMarkdown } from "./ui/MarkdownPreview";
 import { reindentForm } from "./editor/indent";
 import { structuralCommands } from "./editor/structural";
 import { useSettings } from "./settings";
@@ -73,7 +77,8 @@ export const bindings: Binding[] = [
   { id: "load-file", label: "Load the file without compiling", category: "Lisp", emacs: "C-c C-l", scope: "editor", run: loadFile },
   { id: "macroexpand", label: "Expand the macro a step", category: "Lisp", key: "Mod-Shift-m", vim: ",m", emacs: "C-c RET", note: "then click macros inside to expand them in place", scope: "editor", run: (v) => macroexpand(v) },
   { id: "macroexpand-all", label: "Macroexpand fully", category: "Lisp", key: "Mod-Alt-m", vim: ",M", emacs: "C-c M-m", scope: "editor", run: (v) => macroexpand(v, true) },
-  { id: "describe", label: "Describe the symbol", category: "Lisp", key: "Mod-d", vim: "K", emacs: "C-c C-d d", scope: "editor", run: describeSymbol },
+  { id: "doc-tip", label: "Show the symbol's documentation in a popup", category: "Lisp", vim: "K", note: "Escape closes it", scope: "editor", run: (v) => showDocTip(v) },
+  { id: "describe", label: "Describe the symbol in full", category: "Lisp", key: "Mod-d", emacs: "C-c C-d d", scope: "editor", run: describeSymbol },
   { id: "docs", label: "Show the symbol's documentation and HyperSpec page", category: "Lisp", key: "Mod-Shift-d", vim: ",h", emacs: "C-c C-d h", scope: "editor", run: documentSymbol },
   { id: "inspect", label: "Inspect the symbol or selection", category: "Lisp", key: "Mod-i", vim: ",i", emacs: "C-c I", scope: "editor", run: inspectAtCursor },
   { id: "interrupt", label: "Interrupt the evaluation", category: "Lisp", emacs: "C-c C-b", scope: "window", run: () => void actions.interrupt() },
@@ -94,12 +99,15 @@ export const bindings: Binding[] = [
   { id: "palette", label: "Command palette", category: "Window", key: "Mod-Shift-p", scope: "window", run: () => set({ palette: "commands" }) },
   { id: "help", label: "Keyboard shortcuts", category: "Window", key: "Mod-Shift-/", scope: "window", run: () => set({ palette: null, help: true }) },
   { id: "comment", label: "Comment or uncomment the line", category: "Editing", key: "Mod-/", scope: "elsewhere", note: "CodeMirror built-in" },
-  { id: "open", label: "Open a project", category: "Project", key: "Mod-o", scope: "window", run: () => actions.requestOpenProject() },
-  { id: "new", label: "New project", category: "Project", key: "Mod-Shift-n", scope: "window", run: () => set({ newProject: true }) },
-  { id: "repl", label: "Switch to the REPL", category: "Window", key: "Mod-j", emacs: "C-c C-z", scope: "window", run: () => void showRepl() },
+  // In the app these keys belong to the File menu, which takes them before the page sees them.
+  { id: "open", label: "Open a project", category: "Project", key: "Mod-o", note: "or File ▸ Open Project…", scope: "window", when: () => !inTauri, run: () => actions.requestOpenProject() },
+  { id: "new", label: "New project", category: "Project", key: "Mod-Shift-n", note: "or File ▸ New Project…", scope: "window", when: () => !inTauri, run: () => set({ newProject: true }) },
+  { id: "repl", label: "Switch to the REPL, or back to the editor", category: "Window", key: "Mod-j", emacs: "C-c C-z", scope: "window", run: () => void toggleRepl() },
   { id: "assistant", label: "Toggle the assistant", category: "Window", key: "Mod-l", scope: "window", run: () => toggleRight("assistant") },
   { id: "inspector", label: "Toggle the inspector", category: "Window", key: "Mod-Alt-i", scope: "window", run: () => toggleRight("inspector") },
   { id: "docs-panel", label: "Toggle the documentation panel", category: "Window", scope: "window", run: () => toggleRight("docs") },
+  { id: "md-preview", label: "Show a Markdown file rendered, or as text", category: "Window", key: "Mod-Shift-v", scope: "window", when: () => isMarkdown(get().activeTab), run: () => actions.togglePreview(get().activeTab!) },
+  { id: "wrap", label: "Wrap long lines, or stop wrapping them", category: "Window", key: "Alt-z", scope: "window", run: () => useSettings.setState((s) => ({ wordWrap: !s.wordWrap })) },
   { id: "bigger", label: "Increase the font size", category: "Window", key: "Mod-=", scope: "window", run: () => useSettings.setState((s) => ({ fontSize: s.fontSize + 1 })) },
   { id: "smaller", label: "Decrease the font size", category: "Window", key: "Mod--", scope: "window", run: () => useSettings.setState((s) => ({ fontSize: Math.max(9, s.fontSize - 1) })) },
   { id: "repl-send", label: "Run the input, with the cursor at its end", category: "REPL", key: "Enter", note: "elsewhere it opens an indented line", scope: "elsewhere" },
@@ -107,7 +115,7 @@ export const bindings: Binding[] = [
   { id: "repl-newline", label: "Open an indented line", category: "REPL", key: "Shift-Enter", scope: "elsewhere" },
   { id: "repl-history", label: "Recall earlier input", category: "REPL", key: "ArrowUp", scope: "elsewhere", note: "and ↓" },
   { id: "repl-interrupt", label: "Interrupt the evaluation", category: "REPL", key: "Ctrl-c", scope: "elsewhere" },
-  { id: "repl-clear", label: "Clear the REPL", category: "REPL", key: "Mod-k", scope: "elsewhere" },
+  { id: "repl-clear", label: "Clear the REPL", category: "REPL", key: "Mod-k", note: "or ⌃L", scope: "elsewhere" },
   { id: "repl-search", label: "Search earlier input", category: "REPL", key: "Ctrl-r", note: "⌃R again for older matches", scope: "elsewhere" },
   { id: "repl-use-result", label: "Use a result in the input", category: "REPL", note: "click it; ⌘-click inspects it", scope: "elsewhere" },
   { id: "breakpoint", label: "Toggle a breakpoint on the line", category: "Debugger", key: "Mod-F8", vim: ",b", note: "or click the gutter", scope: "editor", run: (v) => toggleBreakpoint(v) },
@@ -172,6 +180,8 @@ export function matches(e: KeyboardEvent, key: string): boolean {
     return false;
   }
   if (CODES[last]) return e.code === CODES[last];
+  // ⌥ makes macOS type a composed character, such as Ω for ⌥Z, so letters with it match by key.
+  if (mods.has("Alt") && /^[a-z]$/i.test(last)) return e.code === `Key${last.toUpperCase()}`;
   return e.key.toLowerCase() === last.toLowerCase();
 }
 
@@ -189,6 +199,14 @@ export function handleWindowKey(e: KeyboardEvent) {
       e.preventDefault();
       e.stopPropagation();
       b.run();
+      return;
+    }
+  }
+  for (const c of usePlugins.getState().manifest?.commands ?? []) {
+    if (c.key && matches(e, c.key)) {
+      e.preventDefault();
+      e.stopPropagation();
+      void runPluginCommand(c.id);
       return;
     }
   }

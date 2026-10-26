@@ -1,10 +1,10 @@
-import { autocompletion, closeBrackets, completionKeymap } from "@codemirror/autocomplete";
+import { acceptCompletion, autocompletion, closeBrackets, completionKeymap, completionStatus, moveCompletionSelection } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, indentOnInput } from "@codemirror/language";
 import { lintGutter, lintKeymap } from "@codemirror/lint";
 import { cursorDiagnostic } from "./cursorDiagnostic";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
-import { Compartment, EditorState, Prec, type Extension } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, Prec, type Extension } from "@codemirror/state";
 import {
   drawSelection,
   EditorView,
@@ -20,7 +20,7 @@ import { editorKeymap, mapVimBindings } from "../keys";
 import { set, useStore } from "../store";
 import { symbolAt } from "../lisp/forms";
 import { bufferPackage, compileFile, lispCompletions, updateArglist, viewPath } from "./commands";
-import { lispHover } from "./hover";
+import { docTips, lispHover } from "./hover";
 import { lispIndentation } from "./indent";
 import { inlineResults } from "./inline";
 import { configureStructuralVim, optionKeys, structuralKeymap } from "./structural";
@@ -30,6 +30,7 @@ import { type Breakpoint, breakpointGutter, breakpointList, breakpoints, isToggl
 import { gitGutter } from "./gitGutter";
 
 export const vimCompartment = new Compartment();
+export const wrapCompartment = new Compartment();
 export const structureCompartment = new Compartment();
 
 const lispKeymap = keymap.of(editorKeymap());
@@ -59,16 +60,67 @@ const theme = EditorView.theme({
 /** The inline diff against the last commit, on for files the user asked to see it for. */
 export const diffCompartment = new Compartment();
 
+/**
+ * The completion list's keys, taken before Vim, which would otherwise insert a
+ * newline for Enter and move the cursor for the arrows in insert mode. ⌃N and
+ * ⌃P move through the list as in Emacs and Vim. A key
+ * handler, not a keymap, so Escape and every other key still reach Vim first.
+ */
+const completionKeys = Prec.highest(
+  EditorView.domEventHandlers({
+    keydown(e, view) {
+      // A list stays open while the next one is fetched, and its keys work then too.
+      if (!completionStatus(view.state) || e.metaKey || e.altKey) return false;
+      if (e.ctrlKey) {
+        const step = e.code === "KeyN" ? true : e.code === "KeyP" ? false : null;
+        if (step === null || e.shiftKey || !moveCompletionSelection(step)(view)) return false;
+        e.preventDefault();
+        return true;
+      }
+      const run =
+        e.key === "Enter" || e.key === "Tab"
+          ? acceptCompletion
+          : e.key === "ArrowDown"
+            ? moveCompletionSelection(true)
+            : e.key === "ArrowUp"
+              ? moveCompletionSelection(false)
+              : e.key === "PageDown"
+                ? moveCompletionSelection(true, "page")
+                : e.key === "PageUp"
+                  ? moveCompletionSelection(false, "page")
+                  : null;
+      if (!run || !run(view)) return false;
+      e.preventDefault();
+      return true;
+    },
+  }),
+);
+
+/** Marks a change that comes from outside the editor: the file reloaded from disk, or edited in the other pane. */
+export const externalChange = Annotation.define<boolean>();
+
+/** A file the user may read but not change. Only changes from outside the editor reach it. */
+const readOnly = [
+  EditorState.readOnly.of(true),
+  EditorState.transactionFilter.of((tr) => (tr.docChanged && !tr.annotation(externalChange) ? [] : tr)),
+];
+
 export function editorExtensions(opts: {
   vim: boolean;
   structure: Extension;
   onChange: (text: string) => void;
   onBreakpoints: (list: Breakpoint[], toggled: boolean) => void;
+  readOnly?: boolean;
+  wrap?: boolean;
 }): Extension[] {
   configureVim();
   return [
-    // Vim must come first: any keymap ahead of it breaks Escape in insert mode.
+    completionKeys,
+    // Vim must come first among keymaps: CodeMirror runs all keymaps from one handler, so any keymap
+    // ahead of Vim takes Escape in insert mode.
     vimCompartment.of(opts.vim ? vim({ status: false }) : []),
+    wrapCompartment.of(opts.wrap ? EditorView.lineWrapping : []),
+    opts.readOnly ? readOnly : [],
     Prec.highest(keymap.of(structuralKeymap)),
     optionKeys,
     breakpointGutter,
@@ -95,6 +147,7 @@ export function editorExtensions(opts: {
     inlineResults(),
     debugSpot,
     lispHover,
+    docTips,
     followDocs,
     gitGutter((view) => {
       const path = viewPath.get(view);

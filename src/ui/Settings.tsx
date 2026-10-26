@@ -6,7 +6,9 @@ import type { ImageInfo } from "../protocol/ImageInfo";
 import type { LispOptions } from "../protocol/LispOptions";
 import { type Settings as EditorSettings, updateSettings, useSettings } from "../settings";
 import { set, useStore } from "../store";
-import { pickFile } from "../platform";
+import { pickFile, revealInFinder } from "../platform";
+import { allThemes, readThemeFiles, type ThemeKind, useThemes } from "../themes";
+import { type PluginSetting, reloadPlugins, setPluginSetting, usePlugins } from "../plugins";
 import { useReturnFocus } from "./focus";
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -92,6 +94,133 @@ function FontPicker({ value, onChange, candidates, defaultName, label, sample, c
   );
 }
 
+function ThemeRows() {
+  const s = useSettings();
+  const { dir, user, problems } = useThemes();
+  const reload = () => actions.request({ type: "themes" }).then((r) => r.type === "themes" && readThemeFiles(r.dir, r.files));
+  const picker = (kind: ThemeKind) => (
+    <select
+      className="select"
+      aria-label={`${kind === "light" ? "Light" : "Dark"} theme`}
+      value={kind === "light" ? s.lightTheme : s.darkTheme}
+      onChange={(e) => updateSettings(kind === "light" ? { lightTheme: e.target.value } : { darkTheme: e.target.value })}
+    >
+      {allThemes(user)
+        .filter((t) => t.kind === kind)
+        .map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ))}
+    </select>
+  );
+  return (
+    <>
+      <Row label="Light theme">{picker("light")}</Row>
+      <Row label="Dark theme">{picker("dark")}</Row>
+      <Row label="Your themes" hint='A theme is a JSON file in the themes folder: { "name": "Paper", "kind": "light", "colors": { "bg": "#ffffff", "syn-string": "#a31515" } }. Colors left out keep ZenLisp’s.'>
+        <div className="path-input">
+          <button className="btn" disabled={!dir} onClick={() => revealInFinder(dir)}>
+            Open Themes Folder
+          </button>
+          <button className="btn" onClick={() => void reload()}>
+            Reload Themes
+          </button>
+        </div>
+        {dir && (
+          <div className="setting-hint" data-testid="themes-dir">
+            {dir}
+          </div>
+        )}
+        {problems.map((p) => (
+          <div key={p} className="setting-hint theme-problem" data-testid="theme-problem">
+            {p}
+          </div>
+        ))}
+      </Row>
+    </>
+  );
+}
+
+function PluginSettingControl({ setting }: { setting: PluginSetting }) {
+  const [typed, setTyped] = useState(String(setting.value ?? ""));
+  const label = `${setting.plugin}: ${setting.title}`;
+  if (setting.type === "boolean")
+    return <Toggle label={setting.title} checked={setting.value === true} onChange={(v) => void setPluginSetting(setting.id, v)} />;
+  if (setting.type === "choice")
+    return (
+      <select className="select" aria-label={label} value={String(setting.value ?? "")} onChange={(e) => void setPluginSetting(setting.id, e.target.value)}>
+        {setting.choices.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </select>
+    );
+  const commit = () => {
+    if (setting.type === "number" && !Number.isFinite(Number(typed))) return setTyped(String(setting.value ?? ""));
+    void setPluginSetting(setting.id, setting.type === "number" ? Number(typed) : typed);
+  };
+  return (
+    <div className="path-input">
+      <input
+        aria-label={label}
+        inputMode={setting.type === "number" ? "decimal" : undefined}
+        value={typed}
+        onChange={(e) => setTyped(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && commit()}
+      />
+    </div>
+  );
+}
+
+function Plugins() {
+  const manifest = usePlugins((s) => s.manifest);
+  if (!manifest)
+    return (
+      <Row label="Plugins">
+        <div className="setting-hint">Plugins run in Lisp. They show here once a project's Lisp is running.</div>
+      </Row>
+    );
+  return (
+    <>
+      <Row
+        label="Plugins folder"
+        hint="Each file.lisp in it, or folder with init.lisp or an ASDF system of its name, is a plugin. Every project's Lisp loads them. docs/plugins.md describes the API."
+      >
+        <div className="path-input">
+          <button className="btn" disabled={!manifest.directory} onClick={() => manifest.directory && revealInFinder(manifest.directory)}>
+            Open Plugins Folder
+          </button>
+          <button className="btn" onClick={() => void reloadPlugins()}>
+            Reload Plugins
+          </button>
+        </div>
+        {manifest.directory && (
+          <div className="setting-hint" data-testid="plugins-dir">
+            {manifest.directory}
+          </div>
+        )}
+      </Row>
+      <Row label="Loaded">
+        {manifest.plugins.length === 0 && <div className="setting-hint">No plugins yet.</div>}
+        {manifest.plugins.map((p) => (
+          <div key={p.name} data-testid="plugin">
+            <span>{p.name}</span>
+            {p.error && <div className="setting-hint theme-problem">{p.error}</div>}
+          </div>
+        ))}
+      </Row>
+      {manifest.settings.map((setting) => (
+        <Row key={setting.id} label={setting.title} hint={[setting.plugin, setting.doc].filter(Boolean).join(" · ")}>
+          <PluginSettingControl setting={setting} />
+        </Row>
+      ))}
+    </>
+  );
+}
+
 function General() {
   const s = useSettings();
   const put = (patch: Partial<EditorSettings>) => updateSettings(patch);
@@ -106,6 +235,7 @@ function General() {
           ))}
         </div>
       </Row>
+      <ThemeRows />
       <Row label="Font size" hint="⌘+ and ⌘- change it too.">
         <div className="stepper-input">
           <button aria-label="Smaller" onClick={() => put({ fontSize: Math.max(9, s.fontSize - 1) })}>
@@ -116,6 +246,9 @@ function General() {
             +
           </button>
         </div>
+      </Row>
+      <Row label="Lines" hint="⌥Z switches it too.">
+        <Toggle label="Wrap long lines" checked={s.wordWrap} onChange={(wordWrap) => put({ wordWrap })} />
       </Row>
       <Row label="Editor font" hint="Code in the editor, the REPL and the panels.">
         <FontPicker
@@ -139,6 +272,9 @@ function General() {
           code={false}
         />
       </Row>
+      <Row label="Projects" hint="Each session starts a fresh Lisp. This loads the systems you loaded last time, so the project is ready as you left it.">
+        <Toggle label="Load the systems loaded last time" checked={s.reloadSystems} onChange={(reloadSystems) => put({ reloadSystems })} />
+      </Row>
       <Row label="Keys" hint="Vim works in the editor; Emacs sequences such as C-c C-c work in any mode.">
         <Toggle label="Vim keys" checked={s.vim} onChange={(vim) => put({ vim })} />
         <Toggle label="Emacs key sequences" checked={s.emacs} onChange={(emacs) => put({ emacs })} />
@@ -149,8 +285,9 @@ function General() {
       <Row label="Checking" hint="Compiles the file in the background as you type, without loading it, and marks warnings and errors.">
         <Toggle label="Check code as you type" checked={s.liveCheck} onChange={(liveCheck) => put({ liveCheck })} />
       </Row>
-      <Row label="Saving" hint="Compiles each top-level form that changed into the running Lisp, so go to definition and references follow your edits. Files of systems not loaded yet are only saved.">
+      <Row label="Saving" hint="Compiles each top-level form that changed into the running Lisp, so go to definition and references follow your edits. Files of systems not loaded yet are only saved. Changes from git or another editor to a loaded file compile the same way.">
         <Toggle label="Compile changes when saving" checked={s.compileOnSave} onChange={(compileOnSave) => put({ compileOnSave })} />
+        <Toggle label="Compile changes made outside ZenLisp" checked={s.compileOnChange} onChange={(compileOnChange) => put({ compileOnChange })} />
       </Row>
     </>
   );
@@ -312,7 +449,7 @@ function Assistant() {
   );
 }
 
-const SECTIONS = { general: "General", lisp: "Lisp", assistant: "Assistant" } as const;
+const SECTIONS = { general: "General", lisp: "Lisp", plugins: "Plugins", assistant: "Assistant" } as const;
 
 export function SettingsScreen() {
   const open = useStore((s) => s.settingsOpen);
@@ -337,7 +474,7 @@ export function SettingsScreen() {
               Done
             </button>
           </div>
-          {section === "general" ? <General /> : section === "lisp" ? <Lisp /> : <Assistant />}
+          {section === "general" ? <General /> : section === "lisp" ? <Lisp /> : section === "plugins" ? <Plugins /> : <Assistant />}
         </div>
       </div>
     </div>

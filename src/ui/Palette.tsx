@@ -6,6 +6,9 @@ import { get, set, useStore } from "../store";
 import { openProjectFlow } from "./Chrome";
 import { openTour } from "../tour";
 import { useReturnFocus } from "./focus";
+import { displayKey } from "../keys";
+import { reloadPlugins, runPluginCommand, usePlugins } from "../plugins";
+import { isMarkdown } from "./MarkdownPreview";
 
 export type Command = { id: string; label: string; keys?: string; run: () => void };
 
@@ -24,6 +27,9 @@ export function commands(openNew: () => void): Command[] {
     { id: "files", label: "Go to File…", keys: "⌘P", run: () => set({ palette: "files" }) },
     ...(tab ? [{ id: "symbols", label: "Go to Definition in File…", keys: "⇧⌘O", run: () => set({ palette: "symbols" }) }] : []),
     { id: "search", label: "Search in Project", keys: "⇧⌘F", run: () => set({ sidebar: "search" }) },
+    { id: "packages", label: "Show Packages", run: () => set({ sidebar: "packages" }) },
+    ...(isMarkdown(get().activeTab) ? [{ id: "md-preview", label: "Toggle Markdown Preview", keys: "⇧⌘V", run: () => actions.togglePreview(get().activeTab!) }] : []),
+    { id: "wrap", label: "Toggle Word Wrap", keys: "⌥Z", run: () => updateSettings({ wordWrap: !useSettings.getState().wordWrap }) },
     { id: "back", label: "Go Back", keys: "⌃O", run: actions.goBack },
     { id: "forward", label: "Go Forward", keys: "⌃⇧O", run: actions.goForward },
     ...(s.status.project ? [{ id: "close", label: "Close Project", run: actions.closeProject }] : []),
@@ -41,6 +47,13 @@ export function commands(openNew: () => void): Command[] {
           { id: "compile", label: "Compile and Load File", keys: "⌘B", run: () => actions.compileFile(tab) },
         ]
       : []),
+    ...(usePlugins.getState().manifest?.commands ?? []).map((c) => ({
+      id: `plugin:${c.id}`,
+      label: c.title,
+      keys: c.key ? displayKey(c.key) : undefined,
+      run: () => void runPluginCommand(c.id),
+    })),
+    ...(usePlugins.getState().manifest ? [{ id: "reload-plugins", label: "Reload Plugins", run: () => void reloadPlugins() }] : []),
     { id: "restart", label: "Restart Lisp", run: actions.restartSession },
     { id: "tour", label: "Getting Started", run: openTour },
     { id: "settings", label: "Settings…", keys: "⌘,", run: () => set({ settingsOpen: true }) },

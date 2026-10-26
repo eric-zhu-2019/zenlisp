@@ -9,7 +9,7 @@ import { liveDebugSpot, useStore } from "../store";
 import { activeEditor, notesToDiagnostics, viewPath } from "./commands";
 import { setBound, setBreakpoints } from "./breakpoints";
 import { setDebugSpot } from "./debugSpot";
-import { diffCompartment, editorExtensions, fallbackStructure, structureCompartment, vimCompartment, watchVimMode } from "./setup";
+import { diffCompartment, editorExtensions, externalChange, fallbackStructure, structureCompartment, vimCompartment, watchVimMode, wrapCompartment } from "./setup";
 import { setGitBase } from "./gitGutter";
 import { unifiedMergeView } from "@codemirror/merge";
 import { structureExtension } from "./structure";
@@ -31,7 +31,7 @@ export function difference(from: string, to: string) {
 /** Brings a state's text up to the store's, after the same file was edited in the other pane. */
 function mirrored(st: EditorState, text: string) {
   if (st.doc.length === text.length && st.doc.toString() === text) return null;
-  return { changes: difference(st.doc.toString(), text), annotations: Transaction.addToHistory.of(false) };
+  return { changes: difference(st.doc.toString(), text), annotations: [Transaction.addToHistory.of(false), externalChange.of(true)] };
 }
 
 export function Editor({ pane }: { pane: number }) {
@@ -48,6 +48,7 @@ export function Editor({ pane }: { pane: number }) {
   const gitHead = useStore((s) => (activeTab ? s.gitHeads[activeTab] : undefined));
   const diffShown = useStore((s) => (activeTab ? s.diffOn.includes(activeTab) : false));
   const vimOn = useSettings((s) => s.vim);
+  const wrapOn = useSettings((s) => s.wordWrap);
   const parinferOn = useSettings((s) => s.parinfer);
 
   const stateFor = (path: string) => {
@@ -64,6 +65,8 @@ export function Editor({ pane }: { pane: number }) {
           actions.checkSoon(path);
         },
         onBreakpoints: (list, toggled) => actions.breakpointsChanged(path, list, toggled),
+        readOnly: actions.readOnlyFile(path),
+        wrap: useSettings.getState().wordWrap,
       }),
     }).update({ effects: setBreakpoints.of(useStore.getState().breakpoints[path] ?? []) }).state;
     states.current.set(path, st);
@@ -125,7 +128,7 @@ export function Editor({ pane }: { pane: number }) {
       // The file changed on disk and the buffer was clean, so take the disk text.
       const v = view.current;
       // Only the span that changed is replaced, so the cursor stays and one undo reverts it.
-      const replace = (st: EditorState) => ({ changes: difference(st.doc.toString(), tab.text) });
+      const replace = (st: EditorState) => ({ changes: difference(st.doc.toString(), tab.text), annotations: externalChange.of(true) });
       if (v && viewPath.get(v) === tab.path) v.dispatch(replace(v.state));
       else {
         const st = states.current.get(tab.path);
@@ -147,6 +150,10 @@ export function Editor({ pane }: { pane: number }) {
   useEffect(() => {
     reconfigureAll(() => vimCompartment.reconfigure(vimOn ? vim({ status: false }) : []));
   }, [vimOn]);
+
+  useEffect(() => {
+    reconfigureAll(() => wrapCompartment.reconfigure(wrapOn ? EditorView.lineWrapping : []));
+  }, [wrapOn]);
 
   useEffect(() => {
     reconfigureAll(() => structureCompartment.reconfigure(parinferOn ? structureExtension() : fallbackStructure));

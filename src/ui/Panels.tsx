@@ -1,11 +1,12 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import * as actions from "../actions";
 import { activeDebugger, set, useStore } from "../store";
-import { useSettings } from "../settings";
 import { Chat } from "./Chat";
 import { DebuggerPanel } from "./Debugger";
 import { DocsPanel } from "./Docs";
 import { Icon } from "./Icon";
+import { EdgeHandle } from "./EdgeHandle";
+import { RIGHT_WIDTH, updateSettings, useSettings } from "../settings";
 import { Repl } from "./Repl";
 import { ProfilePanel, TestsPanel, TracePanel } from "./Tools";
 
@@ -60,8 +61,22 @@ export function Inspector() {
 
 export function RightPanel() {
   const right = useStore((s) => s.right);
+  const rightWidth = useSettings((s) => s.rightWidth);
   if (!right) return null;
-  return <div className="right">{right === "inspector" ? <Inspector /> : right === "docs" ? <DocsPanel /> : <Chat />}</div>;
+  return (
+    <div className="right">
+      <EdgeHandle
+        side="left"
+        label="Panel width"
+        width={rightWidth}
+        min={260}
+        max={() => Math.min(900, window.innerWidth * 0.6)}
+        fallback={RIGHT_WIDTH}
+        onResize={(rightWidth) => updateSettings({ rightWidth })}
+      />
+      {right === "inspector" ? <Inspector /> : right === "docs" ? <DocsPanel /> : <Chat />}
+    </div>
+  );
 }
 
 function Output() {
@@ -182,8 +197,13 @@ export function BottomPanel() {
         <button className="icon-btn" title="Interrupt (⌃C)" onClick={actions.interrupt}>
           <Icon name="stop" size={11} />
         </button>
-        <button className="icon-btn" title="Clear REPL (⌘K)" onClick={actions.clearRepl}>
-          <Icon name="x" size={11} />
+        {dbg && (
+          <button className="icon-btn" title="Close the debugger, returning every stopped thread to its top level" onClick={() => void actions.closeDebuggers()}>
+            <Icon name="bug" size={12} />
+          </button>
+        )}
+        <button className="icon-btn" title="Clear REPL (⌘K or ⌃L)" onClick={actions.clearRepl}>
+          <Icon name="trash" size={12} />
         </button>
       </div>
       <SessionBanner />

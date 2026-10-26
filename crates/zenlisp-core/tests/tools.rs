@@ -90,7 +90,7 @@ async fn project_tools_load_test_and_navigate() {
     std::fs::create_dir_all(&parent).unwrap();
     let wb = workbench();
     let Response::Project { project } = wb
-        .handle(Request::NewProject { parent: parent.display().to_string(), name: "hello-zen".into() })
+        .handle(Request::NewProject { parent: parent.display().to_string(), name: "hello-zen".into(), deps: Default::default() })
         .await
         .unwrap() else { panic!() };
 

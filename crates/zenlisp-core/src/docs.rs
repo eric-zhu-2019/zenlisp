@@ -37,6 +37,10 @@ impl HyperSpec {
         if rel.components().any(|c| !matches!(c, Component::Normal(_))) {
             return None;
         }
+        // The spec's own stylesheet is replaced by ZenLisp's, which every page links.
+        if rel == Path::new("Data/clhs.css") {
+            return Some((include_bytes!("clhs.css").to_vec(), "text/css"));
+        }
         let bytes = std::fs::read(self.root.join(rel)).ok()?;
         let mime = match rel.extension().and_then(|e| e.to_str()).unwrap_or_default() {
             "htm" | "html" => "text/html; charset=iso-8859-1",

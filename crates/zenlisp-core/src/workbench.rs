@@ -1,8 +1,8 @@
-use crate::assistant::{Assistant, AssistantEvent, AssistantStatus, EditorContext};
+use crate::assistant::{Assistant, AssistantEvent, AssistantStatus, EditorContext, SessionInfo};
 use crate::files;
 use crate::search;
 use crate::ops::{Op, Reply};
-use crate::project::{self, Project};
+use crate::project::{self, NewDeps, Project};
 use crate::session::{Session, SessionConfig};
 use crate::sexp::Sexp;
 use crate::swank::{Debugger, Event, Thread};
@@ -26,7 +26,9 @@ pub enum Request {
     #[serde(rename_all = "camelCase")]
     OpenProject { root: String },
     #[serde(rename_all = "camelCase")]
-    NewProject { parent: String, name: String },
+    NewProject { parent: String, name: String, #[serde(default)] deps: NewDeps },
+    /// Which dependency managers a new project can use on this Mac.
+    NewProjectChoices,
     CloseProject,
     ProjectSystems,
     #[serde(rename_all = "camelCase")]
@@ -41,6 +43,16 @@ pub enum Request {
     /// Fetches one new dependency with qlot or ocicl.
     #[serde(rename_all = "camelCase")]
     FetchSystem { name: String },
+    /// Where each of NAMES comes from and in which version.
+    Dependencies { names: Vec<String> },
+    /// The versions ocicl can install of NAME, newest first.
+    DependencyVersions { name: String },
+    /// Pins NAME to VERSION, with ocicl.
+    PinDependency { name: String, version: String },
+    /// Updates NAME to its latest release, with qlot or ocicl.
+    UpdateDependency { name: String },
+    /// Drops NAME's pin and download, with ocicl, once no system depends on it.
+    UnpinDependency { name: String },
     #[serde(rename_all = "camelCase")]
     ReturnString { thread: Thread, tag: i64, text: String },
     #[serde(rename_all = "camelCase")]
@@ -49,6 +61,13 @@ pub enum Request {
     AssistantSend { text: String, context: Option<EditorContext> },
     AssistantCancel,
     AssistantReset,
+    /// The user's theme files, `themes/*.json` in the data directory, made if missing.
+    Themes,
+    /// Saved conversations, the latest first.
+    AssistantSessions,
+    /// Continues a saved conversation, answering with its messages.
+    AssistantOpenSession { id: String },
+    AssistantDeleteSession { id: String },
     AssistantStatus,
     #[serde(rename_all = "camelCase")]
     AssistantSetKey { key: String },
@@ -124,10 +143,24 @@ pub enum Response {
     #[serde(rename_all = "camelCase")]
     Systems { systems: Vec<SystemInfo> },
     #[serde(rename_all = "camelCase")]
+    Dependencies { deps: Vec<Dependency> },
+    #[serde(rename_all = "camelCase")]
+    DependencyVersions { versions: Vec<String> },
+    /// `ocicl` says whether ocicl is set up; `ocicl_missing` says how to set it up.
+    #[serde(rename_all = "camelCase")]
+    NewProjectChoices { ocicl: bool, ocicl_missing: String },
+    #[serde(rename_all = "camelCase")]
     Dir { entries: Vec<DirEntry> },
     #[serde(rename_all = "camelCase")]
     File { content: String },
     Assistant(AssistantStatus),
+    #[serde(rename_all = "camelCase")]
+    Themes { dir: String, files: Vec<ThemeFile> },
+    #[serde(rename_all = "camelCase")]
+    AssistantSessions { sessions: Vec<SessionInfo> },
+    /// The Anthropic messages of a reopened conversation, for the chat to show.
+    #[serde(rename_all = "camelCase")]
+    AssistantSession { messages: Vec<serde_json::Value> },
     Search(search::SearchResult),
     #[serde(rename_all = "camelCase")]
     Replaced { count: usize },
@@ -193,6 +226,34 @@ pub struct Status {
     pub project: Option<Project>,
 }
 
+/// Where a dependency comes from.
+#[derive(Debug, Clone, Copy, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum DepSource {
+    /// Pinned in the project's ocicl.csv.
+    Ocicl,
+    /// A release in a Quicklisp dist.
+    Quicklisp,
+    /// A system ASDF knows from elsewhere, such as the project or SBCL.
+    Local,
+    /// Nothing provides it yet.
+    Missing,
+}
+
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Dependency {
+    pub name: String,
+    /// Empty when the source names no version.
+    pub version: String,
+    pub source: DepSource,
+    /// Downloaded where the source keeps it.
+    pub installed: bool,
+    pub loaded: bool,
+}
+
 #[derive(Debug, Clone, Serialize, TS, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -203,6 +264,8 @@ pub struct SystemInfo {
     pub version: String,
     pub depends_on: Vec<String>,
     pub loaded: bool,
+    /// The function its built program starts in, such as `my-app:main`; empty when it has none.
+    pub entry_point: String,
 }
 
 #[derive(Debug, Clone, Serialize, TS, PartialEq)]
@@ -445,10 +508,14 @@ impl Workbench {
             }
             Request::Status => Ok(Response::Status(self.status().await)),
             Request::OpenProject { root } => self.open_project(Path::new(&root)).await,
-            Request::NewProject { parent, name } => {
-                let root = project::create(Path::new(&parent), &name).map_err(|e| e.to_string())?;
+            Request::NewProject { parent, name, deps } => {
+                let root = project::create(Path::new(&parent), &name, deps).map_err(|e| e.to_string())?;
                 self.open_project(&root).await
             }
+            Request::NewProjectChoices => Ok(Response::NewProjectChoices {
+                ocicl: project::ocicl_runtime().is_some(),
+                ocicl_missing: project::OCICL_MISSING.into(),
+            }),
             Request::CloseProject => {
                 self.stop().await;
                 let mut inner = self.inner.lock().await;
@@ -498,6 +565,47 @@ impl Workbench {
                 self.process_task(format!("fetch {name}"), manager_command(&argv), &p.root);
                 Ok(Response::Ok)
             }
+            Request::Dependencies { names } => {
+                let p = self.project().await?;
+                let v = self
+                    .call(Sexp::list([
+                        Sexp::sym("zenlisp::dependency-info"),
+                        Sexp::str(&p.root),
+                        Sexp::list([Sexp::sym("cl:list")].into_iter().chain(names.iter().map(|n| Sexp::str(n)))),
+                    ]))
+                    .await?;
+                Ok(Response::Dependencies { deps: v.items().iter().map(parse_dependency).collect() })
+            }
+            Request::DependencyVersions { name } => {
+                let p = self.project().await?;
+                p.pin_command(&name, "").ok_or("Only ocicl lists the versions of one system")?;
+                let out = tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    manager_command(&["ocicl".into(), "list".into(), name.clone()]).current_dir(&p.root).output(),
+                )
+                .await
+                .map_err(|_| "ocicl list took over a minute".to_string())?
+                .map_err(|e| format!("ocicl: {e}"))?;
+                Ok(Response::DependencyVersions { versions: ocicl_versions(&String::from_utf8_lossy(&out.stdout)) })
+            }
+            Request::PinDependency { name, version } => {
+                let p = self.project().await?;
+                let argv = p.pin_command(&name, &version).ok_or("Only ocicl pins one system's version")?;
+                self.process_task(format!("pin {name} {version}"), manager_command(&argv), &p.root);
+                Ok(Response::Ok)
+            }
+            Request::UpdateDependency { name } => {
+                let p = self.project().await?;
+                let argv = p.update_one_command(&name).ok_or("Quicklisp updates whole dists, not one system")?;
+                self.process_task(format!("update {name}"), manager_command(&argv), &p.root);
+                Ok(Response::Ok)
+            }
+            Request::UnpinDependency { name } => {
+                let p = self.project().await?;
+                let argv = p.unpin_command(&name).ok_or("Only ocicl pins systems")?;
+                self.process_task(format!("unpin {name}"), manager_command(&argv), &p.root);
+                Ok(Response::Ok)
+            }
             Request::ReturnString { thread, tag, text } => {
                 let s = self.session().await?;
                 s.conn.return_string(thread, tag, &text).await.map_err(|e| e.to_string())?;
@@ -513,7 +621,8 @@ impl Workbench {
                 let emit = Arc::new(move |event| {
                     let _ = events.send(AppEvent::Assistant { event });
                 });
-                self.assistant.send(self.clone(), text, context, emit).await?;
+                let project = self.status().await.project.map(|p| p.root);
+                self.assistant.send(self.clone(), text, context, project, emit).await?;
                 Ok(Response::Ok)
             }
             Request::AssistantCancel => {
@@ -523,6 +632,25 @@ impl Workbench {
             }
             Request::AssistantReset => {
                 self.assistant.reset().await;
+                Ok(Response::Ok)
+            }
+            Request::Themes => {
+                let dir = self.config.data_dir.join("themes");
+                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                let mut files: Vec<ThemeFile> = std::fs::read_dir(&dir)
+                    .map_err(|e| e.to_string())?
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().is_some_and(|x| x == "json"))
+                    .filter_map(|p| Some(ThemeFile { name: p.file_name()?.to_string_lossy().into(), text: std::fs::read_to_string(&p).ok()? }))
+                    .collect();
+                files.sort_by(|a, b| a.name.cmp(&b.name));
+                Ok(Response::Themes { dir: dir.to_string_lossy().into(), files })
+            }
+            Request::AssistantSessions => Ok(Response::AssistantSessions { sessions: self.assistant.sessions() }),
+            Request::AssistantOpenSession { id } => Ok(Response::AssistantSession { messages: self.assistant.open_session(&id).await? }),
+            Request::AssistantDeleteSession { id } => {
+                self.assistant.delete_session(&id).await;
                 Ok(Response::Ok)
             }
             Request::AssistantStatus => Ok(Response::Assistant(self.assistant.status().await)),
@@ -754,6 +882,33 @@ fn track_debugger(debuggers: &mut HashMap<Thread, Vec<Debugger>>, event: &Event)
     }
 }
 
+fn parse_dependency(v: &Sexp) -> Dependency {
+    let text = |k: &str| v.plist_get(k).and_then(Sexp::as_str).unwrap_or_default().to_string();
+    let flag = |k: &str| v.plist_get(k).is_some_and(|l| !l.is_nil());
+    Dependency {
+        name: text("name"),
+        version: text("version"),
+        source: match text("source").as_str() {
+            "ocicl" => DepSource::Ocicl,
+            "quicklisp" => DepSource::Quicklisp,
+            "local" => DepSource::Local,
+            _ => DepSource::Missing,
+        },
+        installed: flag("installed"),
+        loaded: flag("loaded"),
+    }
+}
+
+/// The versions in `ocicl list` output: a header line, then one indented version a line.
+fn ocicl_versions(out: &str) -> Vec<String> {
+    out.lines()
+        .filter(|l| l.starts_with(' '))
+        .map(str::trim)
+        .filter(|v| !v.is_empty() && *v != "latest")
+        .map(String::from)
+        .collect()
+}
+
 fn parse_system(v: &Sexp) -> SystemInfo {
     let text = |k: &str| v.plist_get(k).and_then(Sexp::as_str).unwrap_or_default().to_string();
     SystemInfo {
@@ -769,6 +924,7 @@ fn parse_system(v: &Sexp) -> SystemInfo {
             .filter_map(|d| d.as_str().map(String::from))
             .collect(),
         loaded: v.plist_get("loaded").is_some_and(|l| !l.is_nil()),
+        entry_point: text("entry-point"),
     }
 }
 
@@ -800,6 +956,15 @@ fn manager_command(argv: &[String]) -> tokio::process::Command {
 }
 
 const OPTIONS_FILE: &str = "lisp-options.json";
+
+/// A theme file as written; the interface reads and checks it.
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ThemeFile {
+    pub name: String,
+    pub text: String,
+}
 
 fn load_options(data_dir: &Path) -> LispOptions {
     std::fs::read_to_string(data_dir.join(OPTIONS_FILE)).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()

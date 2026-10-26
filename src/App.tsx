@@ -5,10 +5,12 @@ import { fontStack } from "./fonts";
 import { emacsKeyHandler, handleWindowKey } from "./keys";
 import { useSettings } from "./settings";
 import { set, useStore } from "./store";
+import { allThemes, applyTheme, readThemeFiles, themeFor, useThemes } from "./themes";
 import { EditorEmpty, isTabDrag, NewProjectDialog, readTabDrag, Tabs, TitleBar, Welcome } from "./ui/Chrome";
 import { ConflictBanner, DialogHost } from "./ui/Dialog";
 import { HelpScreen } from "./ui/Help";
 import { Tour } from "./ui/Tour";
+import { isMarkdown, MarkdownPreview } from "./ui/MarkdownPreview";
 import { SettingsScreen } from "./ui/Settings";
 import { Palette } from "./ui/Palette";
 import { BottomPanel, RightPanel, StatusBar } from "./ui/Panels";
@@ -34,13 +36,26 @@ function setFont(variable: string, stack: string | null) {
 
 function useAppearance() {
   const theme = useSettings((s) => s.theme);
+  const lightTheme = useSettings((s) => s.lightTheme);
+  const darkTheme = useSettings((s) => s.darkTheme);
+  const userThemes = useThemes((s) => s.user);
+  const [systemDark, setSystemDark] = useState(() => matchMedia("(prefers-color-scheme: dark)").matches);
   const fontSize = useSettings((s) => s.fontSize);
   const editorFont = useSettings((s) => s.editorFont);
   const uiFont = useSettings((s) => s.uiFont);
   useEffect(() => {
-    if (theme === "system") delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = theme;
-  }, [theme]);
+    const media = matchMedia("(prefers-color-scheme: dark)");
+    const change = () => setSystemDark(media.matches);
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
+  }, []);
+  useEffect(() => {
+    void actions.request({ type: "themes" }).then((r) => r.type === "themes" && readThemeFiles(r.dir, r.files));
+  }, []);
+  useEffect(() => {
+    const kind = theme === "system" ? (systemDark ? "dark" : "light") : theme;
+    applyTheme(themeFor(kind, kind === "dark" ? darkTheme : lightTheme, allThemes(userThemes)));
+  }, [theme, systemDark, lightTheme, darkTheme, userThemes]);
   useEffect(() => {
     document.documentElement.style.setProperty("--editor-font-size", `${fontSize}px`);
   }, [fontSize]);
@@ -71,6 +86,7 @@ function EditorPanes({ hasTabs }: { hasTabs: boolean }) {
   const count = useStore((s) => s.panes.length);
   const focused = useStore((s) => s.focusedPane);
   const panes = useStore((s) => s.panes);
+  const previews = useStore((s) => s.previews);
   const empty = panes.map((p) => p.tabs.length === 0);
   const [splitting, setSplitting] = useState(false);
   return (
@@ -103,6 +119,14 @@ function EditorPanes({ hasTabs }: { hasTabs: boolean }) {
           >
             {focused === i && <ConflictBanner />}
             <Editor pane={i} />
+            {isMarkdown(panes[i].active) && (
+              <>
+                {previews.includes(panes[i].active!) && <MarkdownPreview path={panes[i].active!} />}
+                <button className="btn md-toggle" title="Show it rendered, or as text (⇧⌘V)" onClick={() => actions.togglePreview(panes[i].active!)}>
+                  {previews.includes(panes[i].active!) ? "Edit" : "Preview"}
+                </button>
+              </>
+            )}
             {(!hasTabs || empty[i]) && (
               <div style={{ position: "absolute", inset: 0, background: "var(--bg-editor)" }}>
                 <EditorEmpty />
@@ -123,6 +147,8 @@ export default function App() {
   const newOpen = useStore((s) => s.newProject);
   const openNew = () => set({ newProject: true });
   const split = useSplitter();
+  const sidebarWidth = useSettings((s) => s.sidebarWidth);
+  const rightWidth = useSettings((s) => s.rightWidth);
   useGlobalShortcuts();
   useAppearance();
 
@@ -134,7 +160,7 @@ export default function App() {
     <div className="app">
       <TitleBar />
       {project ? (
-        <div className="workspace">
+        <div className="workspace" style={{ "--sidebar-w": `${sidebarWidth}px`, "--right-w": `${rightWidth}px` } as React.CSSProperties}>
           <Sidebar />
           <main className="center" style={{ "--bottom-h": `${split.height}px` } as React.CSSProperties}>
             <EditorPanes hasTabs={hasTabs} />

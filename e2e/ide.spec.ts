@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 const shots = (page: Page, name: string) => page.screenshot({ path: `e2e/.results/${name}.png` });
@@ -160,6 +160,33 @@ test("new project, evaluate, debug and inspect", async ({ page }) => {
   await page.locator(".restart", { hasText: "ABORT" }).first().click();
   await expect(page.getByTestId("debugger")).toHaveCount(0);
 
+  await page.getByTitle("Interrupt (⌃C)").click();
+  await expect(page.getByText("Nothing is running in the REPL"), "an idle REPL is not interrupted").toBeVisible();
+  await expect(page.getByTestId("debugger")).toHaveCount(0);
+  await replEval(page, "(sleep 30)");
+  await page.keyboard.press("Control+c");
+  await expect(page.getByTestId("debugger"), "a running one is, and says so plainly").toContainText("Interrupted");
+  await expect(page.getByTestId("debugger")).not.toContainText("Emacs");
+  await page.locator(".restart", { hasText: "ABORT" }).first().click();
+  await expect(page.getByTestId("debugger")).toHaveCount(0);
+
+  await replEval(page, '(error "outer")');
+  await expect(page.getByTestId("debugger")).toContainText("outer");
+  await replEval(page, '(error "inner")');
+  await expect(page.getByTestId("debugger"), "an error inside the debugger nests a level").toContainText("inner");
+  await replEval(page, '(sb-thread:make-thread (lambda () (error "elsewhere")))');
+  await expect(page.getByTestId("debugger-threads").locator(".dbg-thread")).toHaveCount(2);
+  await page.getByTitle("Close the debugger, returning every stopped thread to its top level").click();
+  await expect(page.getByTestId("debugger"), "one click leaves every level of every thread").toHaveCount(0);
+  await replEval(page, "(* 111 3)");
+  await expect(page.locator(".repl-buffer .cm-line", { hasText: /^333$/ }), "the REPL is back at its top level").toBeVisible();
+  await page.getByTitle("Clear REPL (⌘K or ⌃L)").click();
+  await expect(page.locator(".repl-buffer"), "Clear empties the transcript").not.toContainText("outer");
+  await replEval(page, "(* 111 4)");
+  await expect(page.locator(".repl-buffer .cm-line", { hasText: /^444$/ })).toBeVisible();
+  await page.keyboard.press("Control+l");
+  await expect(page.locator(".repl-buffer"), "⌃L clears it too, as in a terminal").not.toContainText("444");
+
   const clickGutter = async (text: string) => {
     const line = await page.locator(".editor-host .cm-line", { hasText: text }).boundingBox();
     const gutter = await page.locator(".editor-host .cm-breakpoint-gutter").boundingBox();
@@ -213,6 +240,26 @@ test("assistant runs tools in the live image and its code can be inserted", asyn
 
   await page.getByTitle("Assistant settings").click();
   await expect(page.locator(".chat-mcp pre")).toContainText("claude mcp add --transport http zenlisp");
+  await page.getByTitle("Assistant settings").click();
+
+  await page.getByTitle("New conversation").click();
+  await expect(page.locator(".chat-user")).toHaveCount(0);
+  await page.getByTitle("Earlier conversations").click();
+  const earlier = page.getByRole("menu", { name: "Earlier conversations" });
+  await earlier.getByRole("menuitem", { name: /What is six times seven\?/ }).click();
+  await expect(page.locator(".chat-user"), "a saved conversation opens again").toHaveText("What is six times seven?");
+  await expect(page.locator(".chat-assistant strong"), "with its answer").toHaveText("42");
+  await expect(page.locator(".chat-tool"), "and its tool call").toContainText("eval");
+
+  await page.reload();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  await page.getByTitle("AI assistant (⌘L)").click();
+  await expect(page.locator(".chat-user"), "opening the assistant again restores the latest conversation").toHaveText("What is six times seven?", { timeout: 10_000 });
+  await page.getByTitle("Earlier conversations").click();
+  const row = earlier.locator(".session", { hasText: "What is six times seven?" });
+  await row.hover();
+  await row.getByTitle("Delete this conversation").click();
+  await expect(row, "and one can be deleted").toHaveCount(0);
 });
 
 test("vim editing with parinfer, completion, arglists, notes and definitions", async ({ page }) => {
@@ -241,7 +288,16 @@ test("vim editing with parinfer, completion, arglists, notes and definitions", a
   await expect(page.locator(".statusbar .hint")).toContainText("function list &rest more-lists");
   await expect(page.locator(".statusbar .hint .active")).toHaveText("function");
 
-  await page.keyboard.type("#'1+ (list x x)) (multiple-value-b");
+  await page.keyboard.type("#'1+ (list x x)) (multiple-value-");
+  await expect(page.locator(".cm-tooltip-autocomplete")).toContainText("multiple-value-call");
+  await expect(page.locator(".cm-tooltip-autocomplete li").nth(1)).toBeVisible();
+  const selected = page.locator(".cm-tooltip-autocomplete li[aria-selected]");
+  const first = await selected.textContent();
+  await page.keyboard.press("Control+n");
+  await expect(selected).not.toHaveText(first ?? "");
+  await page.keyboard.press("Control+p");
+  await expect(selected).toHaveText(first ?? "");
+  await page.keyboard.type("b");
   await expect(page.locator(".cm-tooltip-autocomplete")).toContainText("multiple-value-bind");
   await page.keyboard.press("Escape");
   await shots(page, "06-editing");
@@ -459,6 +515,11 @@ test("search, replace, outline, back and forward, and the problems panel", async
   await page.keyboard.press("Meta+b");
   const problems = page.getByTestId("problems");
   await expect(problems).toContainText("undefined variable");
+  expect(existsSync(join(root, "src/oops.fasl")), "compiling a file leaves no fasl beside it").toBe(false);
+  expect(
+    execFileSync("find", [join(homedir(), "Library/Caches/ZenLisp/fasl"), "-path", `*${realpathSync(root)}/src/oops.fasl`]).toString(),
+    "it goes where ASDF looks for it",
+  ).toContain("oops.fasl");
   await page.keyboard.press("Control+o");
   await problems.locator(".problem").first().click();
   await expect(activeLine).toContainText("undefined-thing");
@@ -646,7 +707,9 @@ test("documentation that follows the cursor, HyperSpec pages, and apropos", asyn
   await expect(docs.getByTestId("docs-symbol")).toHaveText("format");
   await expect(docs.locator(".docs-arglist")).toContainText("control-string");
   const spec = page.frameLocator("[data-testid=hyperspec]");
-  await expect(spec.locator("h1")).toHaveText("FORMAT");
+  await expect(spec.locator("a[name=format]")).toContainText("FORMAT");
+  expect(await spec.locator("body").evaluate((b) => getComputedStyle(b).fontFamily), "the spec takes ZenLisp's look, not its own").toMatch(/apple-system|BlinkMacSystemFont/);
+  await expect(spec.locator("h1").first(), "and drops the LispWorks picture bar").toBeHidden();
   await shots(page, "21-docs-hyperspec");
   await spec.getByRole("link", { name: "WRITE-LINE" }).click();
   await expect(spec.locator("h1"), "HyperSpec links work inside the panel").toHaveText("WRITE-LINE");
@@ -934,6 +997,23 @@ test("go to definitions Lisp has not loaded, and see warnings as you type", asyn
   await expect(editor.locator(".cm-line", { hasText: "(defun shout" })).toHaveText("(defun shout (s) (concatenate 'string s s))");
   await expect(editor.locator(".cm-lintRange-warning"), "fixing it clears the mark").toHaveCount(0, { timeout: 10_000 });
   expect(readFileSync(join(parent, "zen-live/src/main.lisp"), "utf8"), "checking leaves the file unsaved").not.toContain("shout");
+
+  await page.locator(".tab", { hasText: "main.lisp" }).click();
+  await editor.locator(".cm-line", { hasText: "(write-line" }).getByText("write-line").click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.type("gd");
+  await expect(page.locator(".tab.active")).toHaveText(/stream\.lisp/);
+  // Nothing signals that no check will come, so give one the time it would take.
+  await page.waitForTimeout(2500);
+  await expect(editor.locator(".cm-lintRange"), "SBCL's own sources are not checked, so package locks raise nothing").toHaveCount(0);
+  await expect(page.locator(".tab.active .tab-lock"), "a file outside the project opens read-only").toBeVisible();
+  const before = await editor.locator(".cm-content").evaluate((el) => el.textContent);
+  await page.keyboard.type("xxdd");
+  await page.keyboard.type("ihello");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Meta+s");
+  await expect(page.getByText("stream.lisp is outside the project, so it is read-only")).toBeVisible();
+  expect(await editor.locator(".cm-content").evaluate((el) => el.textContent), "neither Vim edits nor typing change it").toBe(before);
 });
 
 test("saving compiles only what changed, and gd goes to local bindings and back", async ({ page }) => {
@@ -1010,6 +1090,8 @@ test("a file that uses a package from an unloaded file is still checked, and a c
   await expect(atCursor).toHaveCount(0);
   await page.keyboard.type("^l");
   await expect(atCursor, "moving the cursor onto a mark shows its message").toContainText("undefined function: ZEN-USES-MAIN::HELLO2");
+  expect(await atCursor.evaluate((el) => getComputedStyle(el).webkitUserSelect), "its text can be selected and copied").toBe("text");
+  await expect(atCursor.getByRole("button", { name: "Copy" })).toBeVisible();
   await page.keyboard.type("w");
   await expect(atCursor, "and moving off it hides it").toHaveCount(0);
   await page.keyboard.type("b");
@@ -1048,4 +1130,590 @@ test("a file that uses a package from an unloaded file is still checked, and a c
   await page.keyboard.type("dd");
   await expect(editor.locator(".cm-lintRange-error"), "and the next check still runs").toHaveCount(0, { timeout: 10_000 });
   await expect(marks).toHaveText(["hello2"]);
+  await page.locator(".panel-tab", { hasText: "REPL" }).click();
+  await replEval(page, '(list :left-behind (find-package "ZEN-USES-MAIN") (find-package "ZEN-HELPERS"))');
+  await expect(page.locator(".repl-buffer"), "checks leave no package or symbol behind in the image").toContainText("(:LEFT-BEHIND NIL NIL)");
+});
+
+test("a loaded file changed outside ZenLisp compiles only what changed", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-watch");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  await page.locator(".system").first().getByRole("button", { name: "Load" }).click();
+  await expect(page.getByText("load zen-watch: done")).toBeVisible({ timeout: 60_000 });
+  const root = join(parent, "zen-watch");
+  const flash = page.getByTestId("flash");
+
+  // After a load ZenLisp records the loaded files as on disk; nothing shows when that is done.
+  await page.waitForTimeout(1000);
+  // As git or another editor would: the file changes on disk, not in ZenLisp.
+  const main = join(root, "src/main.lisp");
+  writeFileSync(main, readFileSync(main, "utf8").replace("Hello, ~a!", "Hi, ~a!"));
+  await expect(flash, "only the changed function compiles").toHaveText("Compiled greet from disk", { timeout: 10_000 });
+  await expect(page.locator(".editor-host .cm-content"), "the open file shows the new text").toContainText("Hi, ~a!");
+  await page.locator(".panel-tab", { hasText: "REPL" }).click();
+  await replEval(page, '(zen-watch:greet "watch")');
+  await expect(page.locator(".presentation", { hasText: '"Hi, watch!"' }), "and Lisp runs it").toBeVisible();
+
+  const asd = join(root, "zen-watch.asd");
+  writeFileSync(asd, readFileSync(asd, "utf8").replace(':version "0.1.0"', ':version "0.1.1"'));
+  await expect(flash, "a changed .asd asks for a load").toHaveText("zen-watch.asd changed; Load zen-watch to apply it", { timeout: 10_000 });
+});
+
+test("the REPL keeps its prompt in view when the debugger opens beside it", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-pin");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  await replEval(page, '(dotimes (i 80) (format t "line ~a of output long enough to wrap when the REPL narrows~%" i))');
+  await expect(page.locator(".repl-buffer")).toContainText("line 79 of output");
+  const focusedIn = () => page.evaluate(() => (document.activeElement?.closest(".editor-host") ? "editor" : document.activeElement?.closest(".repl") ? "repl" : "elsewhere"));
+  await page.keyboard.press("Meta+j");
+  expect(await focusedIn(), "⌘J in the REPL goes back to the editor").toBe("editor");
+  await page.keyboard.press("Meta+j");
+  expect(await focusedIn(), "and again to the REPL").toBe("repl");
+  await page.getByTestId("repl-input").hover();
+  await page.mouse.wheel(0, -5000);
+  await expect(page.locator(".repl-buffer .repl-prompt").last()).not.toBeInViewport();
+  await page.keyboard.press("Meta+j");
+  await page.keyboard.press("Meta+j");
+  await expect(page.locator(".repl-buffer .repl-prompt").last(), "⌘J from the editor scrolls the REPL back to its prompt").toBeInViewport();
+  await expect(page.locator(".repl-buffer .cm-cursor-primary"), "with a cursor drawn where typing goes").toBeVisible();
+  await replEval(page, '(error "stopped here")');
+  await expect(page.locator(".repl-buffer")).toContainText("stopped here");
+  const prompt = page.locator(".repl-buffer .repl-prompt").last();
+  await expect(prompt, "the prompt stays in view after the debugger narrows the REPL").toBeInViewport();
+});
+
+test("a DEFPACKAGE error while compiling is a note, and later checks still run", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-wait");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  writeFileSync(join(parent, "zen-wait/src/stops.lisp"), "(defpackage #:zen-stops\n  (:use #:cl #:no-such-package))\n");
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.getByTestId("file-tree").getByText("src").click();
+  await page.getByTestId("file-tree").getByText("stops.lisp").click();
+  const editor = page.locator(".editor-host");
+  await editor.locator(".cm-content").click();
+  await page.keyboard.press("Meta+b");
+  // SBCL raises this holding its package graph lock; a debugger there would stop every other compile.
+  await expect(page.getByTestId("problems"), "the error is a note on the form").toContainText('"NO-SUCH-PACKAGE" does not designate any package');
+  await expect(page.locator(".panel-tab", { hasText: "Problems" }).locator(".count-badge"), "once").toHaveText("1");
+  await expect(page.locator(".panel-tab", { hasText: "REPL" }).locator(".count-badge"), "and no debugger opens").toHaveCount(0);
+
+  await page.locator(".tab", { hasText: "main.lisp" }).click();
+  await editor.locator(".cm-line", { hasText: "(write-line" }).click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.type("o(list undefined-thing)");
+  await page.keyboard.press("Escape");
+  await expect(editor.locator(".cm-lintRange-warning"), "the check of another file still runs and marks it").toHaveText(["undefined-thing"], { timeout: 10_000 });
+});
+
+test("saving a file Lisp has not loaded compiles all of it, and other files see what it defines", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-fresh");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const root = join(parent, "zen-fresh");
+  writeFileSync(join(root, "src/helpers.lisp"), "(defpackage #:zen-helpers\n  (:use #:cl)\n  (:export #:hello))\n\n(in-package #:zen-helpers)\n\n(defun hello (w)\n  (format nil \"hello ~a\" w))\n");
+  writeFileSync(join(root, "src/caller.lisp"), "(defpackage #:zen-caller\n  (:use #:cl #:zen-helpers))\n\n(in-package #:zen-caller)\n\n(defun run ()\n  (hello \"good\"))\n");
+  const editor = page.locator(".editor-host");
+  const tree = page.getByTestId("file-tree");
+  await page.getByRole("button", { name: "Files" }).click();
+  await tree.getByText("src").click();
+  await tree.getByText("caller.lisp").click();
+  await expect(editor.locator(".cm-lintRange-warning"), "before its package's file is in Lisp, hello is unknown").toHaveText(["hello"], { timeout: 10_000 });
+
+  await tree.getByText("helpers.lisp").click();
+  await editor.locator(".cm-content").click();
+  await page.keyboard.press("Meta+s");
+  await expect(page.getByTestId("flash"), "saving it unchanged still compiles it, since Lisp has none of it").toHaveText("Compiled #:zen-helpers, hello");
+  await page.locator(".tab", { hasText: "caller.lisp" }).click();
+  await expect(editor.locator(".cm-lintRange"), "and the other file's check now finds hello").toHaveCount(0, { timeout: 10_000 });
+});
+
+test("a file's check compiles the files it depends on first, so their functions are known", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-order");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const root = join(parent, "zen-order");
+  writeFileSync(join(root, "src/package.lisp"), "(defpackage #:zen-order\n  (:use #:cl)\n  (:export #:main #:greet #:hello))\n\n(in-package #:zen-order)\n\n(defun hello (w)\n  (format nil \"hello ~a\" w))\n");
+  writeFileSync(join(root, "src/main.lisp"), "(in-package #:zen-order)\n\n(defun greet (name)\n  (format nil \"Hello, ~a!\" name))\n\n(defun main ()\n  (hello \"good\")\n  (nowhere 1))\n");
+  const editor = page.locator(".editor-host");
+  await page.locator(".tab", { hasText: "main.lisp" }).click();
+  await editor.locator(".cm-line", { hasText: "(nowhere" }).click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.type("A ");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Escape");
+  await expect(editor.locator(".cm-lintRange-warning"), "hello comes from package.lisp, compiled first; only nowhere is undefined").toHaveText(["nowhere"], { timeout: 10_000 });
+  await page.locator(".panel-tab", { hasText: "REPL" }).click();
+  await replEval(page, '(list :left-behind (find-package "ZEN-ORDER"))');
+  await expect(page.locator(".repl-buffer"), "and the check still leaves nothing in the image").toContainText("(:LEFT-BEHIND NIL)");
+
+  await editor.locator(".cm-content").click();
+  await page.keyboard.press("Meta+b");
+  await expect(page.getByTestId("problems"), "the one note is the undefined function").toContainText("NOWHERE");
+  await page.locator(".panel-tab", { hasText: "REPL" }).click();
+  await expect(page.locator(".repl-buffer"), "⌘B loads what main.lisp depends on first, then compiles it").toContainText(/Compiled main\.lisp in [\d.]+s: 1 note/);
+  await replEval(page, '(zen-order:hello "built")');
+  await expect(page.locator(".presentation", { hasText: '"hello built"' })).toBeVisible();
+});
+
+test("a new project can take its dependencies from ocicl", async ({ page }) => {
+  test.skip(!existsSync(join(homedir(), ".local/share/ocicl/ocicl-runtime.lisp")), "ocicl is not set up on this Mac");
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-oc");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("radio", { name: "ocicl" }).click();
+  await expect(page.locator(".dialog-hint")).toContainText("pinned in ocicl.csv");
+  await shots(page, "32-new-project-ocicl");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const root = join(parent, "zen-oc");
+  expect(existsSync(join(root, "ocicl.csv")), "the project pins its dependencies in ocicl.csv").toBe(true);
+  expect(readFileSync(join(root, ".gitignore"), "utf8")).toContain("ocicl/");
+  await expect(page.getByTestId("file-tree").getByText("ocicl.csv")).toBeVisible();
+  const managers = page.locator(".managers");
+  await expect(managers, "ocicl manages it").toContainText("ocicl");
+  await expect(managers, "and the global Quicklisp stays out").not.toContainText("Quicklisp");
+  await page.locator(".system").first().getByRole("button", { name: "Load" }).click();
+  await expect(page.getByText("load zen-oc: done")).toBeVisible({ timeout: 60_000 });
+});
+
+test("the project menu creates, opens and closes projects, asking about unsaved files first", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-first");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const editor = page.locator(".editor-host");
+  await editor.locator(".cm-line", { hasText: "(defun main" }).click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.type("O; not saved yet");
+  await page.keyboard.press("Escape");
+
+  const projectMenu = page.locator(".project-menu");
+  await projectMenu.getByRole("button", { name: "zen-first" }).click();
+  await shots(page, "33-project-menu");
+  await projectMenu.getByRole("menuitem", { name: /New Project/ }).click();
+  await page.getByPlaceholder("my-app").fill("zen-second");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  const ask = page.getByRole("alertdialog");
+  await expect(ask, "leaving a project with unsaved files asks first").toContainText("Save changes to zen-first first?");
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(editor, "cancelling keeps the project and the edit").toContainText("; not saved yet");
+
+  await projectMenu.getByRole("button", { name: "zen-first" }).click();
+  await projectMenu.getByRole("menuitem", { name: /New Project/ }).click();
+  await page.getByPlaceholder("my-app").fill("zen-second");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await ask.getByRole("button", { name: "Don't Save" }).click();
+  await expect(projectMenu.getByRole("button", { name: "zen-second" }), "the new project opens").toBeVisible({ timeout: 60_000 });
+  await expect(page.locator(".tab")).toHaveText([/main\.lisp/]);
+  await expect(editor).not.toContainText("; not saved yet");
+
+  await projectMenu.getByRole("button", { name: "zen-second" }).click();
+  await projectMenu.getByRole("menuitem", { name: /^zen-first/ }).click();
+  await expect(projectMenu.getByRole("button", { name: "zen-first" }), "a recent project opens from the menu").toBeVisible({ timeout: 60_000 });
+  await projectMenu.getByRole("button", { name: "zen-first" }).click();
+  await projectMenu.getByRole("menuitem", { name: "Close Project" }).click();
+  await expect(page.getByText("A live Common Lisp workbench on SBCL.")).toBeVisible();
+});
+
+test("new project names are lowercased as typed, and fields are not autocorrected", async ({ page }) => {
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  const name = page.getByPlaceholder("my-app");
+  const location = page.getByPlaceholder("/Users/you/projects");
+  const create = page.getByRole("button", { name: "Create" });
+  for (const [attr, value] of [["autocapitalize", "off"], ["autocorrect", "off"], ["spellcheck", "false"]]) {
+    await expect(name, `the name field has ${attr}=${value}`).toHaveAttribute(attr, value);
+    await expect(location).toHaveAttribute(attr, value);
+  }
+  await location.fill("");
+  await expect(page.locator(".dialog-hint", { hasText: "Choose the folder" }), "an empty location says what is missing").toBeVisible();
+  await location.fill(tmpdir());
+  await name.fill("My-App");
+  await expect(name, "capitals become lowercase").toHaveValue("my-app");
+  await expect(create).toBeEnabled();
+  await name.fill("2fast");
+  await expect(page.locator(".error-hint"), "a name that cannot be used says why").toHaveText("Use letters, digits and dashes, starting with a letter.");
+  await expect(create).toBeDisabled();
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  await page.keyboard.press("Meta+Shift+P");
+  const palette = page.getByPlaceholder("Type a command…");
+  await expect(palette, "every one-line field is left as typed").toHaveAttribute("autocorrect", "off");
+  await expect(palette).toHaveAttribute("autocapitalize", "off");
+});
+
+test("the Packages tab lists, adds and removes the project's dependencies", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-pkgs");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const asd = join(parent, "zen-pkgs", "zen-pkgs.asd");
+  await page.locator(".sidebar-modes").getByRole("button", { name: "Packages" }).click();
+  const panel = page.getByTestId("packages");
+  await expect(panel).toContainText("No dependencies yet");
+
+  await panel.getByRole("button", { name: "Add" }).click();
+  await page.getByPlaceholder("Add a dependency to zen-pkgs…").fill("split-seq");
+  await expect(page.getByTestId("dependency-results").locator(".item").first()).toContainText("split-sequence");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("output")).toContainText("fetch split-sequence · finished", { timeout: 60_000 });
+  expect(readFileSync(asd, "utf8")).toContain(':depends-on ("split-sequence")');
+  const row = panel.getByTestId("dep-split-sequence");
+  await expect(row.locator(".pkg-source"), "the panel shows where it comes from").toHaveText("Quicklisp");
+  await expect(row.locator(".pkg-version"), "and in which release").not.toHaveText("—");
+  await shots(page, "34-packages");
+
+  await row.hover();
+  await row.getByTitle("Remove split-sequence").click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
+  await expect(row, "removing it takes it out of the list").toHaveCount(0);
+  expect(readFileSync(asd, "utf8"), "and out of the .asd").toContain(":depends-on ()");
+});
+
+test("Run calls a system's entry point in the REPL", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-run");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const main = page.locator(".system", { has: page.locator(".name", { hasText: /^zen-run$/ }) });
+  const tests = page.locator(".system", { has: page.locator(".name", { hasText: /^zen-run\/tests$/ }) });
+  await expect(tests.getByRole("button", { name: "Run" }), "a system without an entry point has no Run").toHaveCount(0);
+  await main.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator(".repl-buffer"), "Run loads the system and calls zen-run:main").toContainText("Hello, world!", { timeout: 60_000 });
+  await expect(page.locator(".repl-buffer")).toContainText('(uiop:call-function "zen-run:main")');
+});
+
+test("the sidebar and the right panel resize by their edges, and keep their widths", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-size");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const sidebar = page.locator(".sidebar");
+  const width = async (l: typeof sidebar) => Math.round((await l.boundingBox())!.width);
+  const drag = async (handle: ReturnType<Page["getByRole"]>, dx: number) => {
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + 200);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + dx, box.y + 200, { steps: 8 });
+    await page.mouse.up();
+  };
+  const before = await width(sidebar);
+  await drag(page.getByRole("separator", { name: "Sidebar width" }), 100);
+  expect(await width(sidebar), "dragging the edge right widens the sidebar").toBe(before + 100);
+  await page.reload();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  expect(await width(sidebar), "and the width is kept").toBe(before + 100);
+  await page.getByRole("separator", { name: "Sidebar width" }).dblclick();
+  expect(await width(sidebar), "double-click restores the default").toBe(240);
+  await page.getByRole("separator", { name: "Sidebar width" }).focus();
+  await page.keyboard.press("ArrowRight");
+  expect(await width(sidebar), "the arrow keys move the edge too").toBe(256);
+
+  await page.getByTitle("Inspector (⌥⌘I)").click();
+  const right = page.locator(".workspace > .right");
+  const rightBefore = await width(right);
+  await drag(page.getByRole("separator", { name: "Panel width" }), -120);
+  expect(await width(right), "dragging the right panel's edge left widens it").toBe(rightBefore + 120);
+});
+
+test("package and system names complete where code names them", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-comp");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const editor = page.locator(".editor-host");
+  const options = page.locator(".cm-tooltip-autocomplete li");
+  await page.getByTestId("file-tree").getByText("src").click();
+  await page.getByTestId("file-tree").getByText("package.lisp").click();
+  await editor.locator(".cm-line", { hasText: "(:use #:cl)" }).click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.type("o(:local-nicknames (#:s #:split-seq");
+  await expect(options.first(), "a package not loaded yet completes from the systems the catalogs list").toContainText("split-sequence", { timeout: 10_000 });
+  // CodeMirror ignores Enter for 75ms after the list changes, so a key meant for the old list does not pick from the new.
+  await page.waitForTimeout(200);
+  await page.keyboard.press("Enter");
+  await expect(editor.locator(".cm-line", { hasText: "local-nicknames" })).toContainText("(#:s #:split-sequence");
+  await page.keyboard.press("Escape");
+
+  await page.locator(".tab", { hasText: "main.lisp" }).click();
+  await editor.locator(".cm-line", { hasText: "(in-package" }).click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.type("O(in-package :zen-c");
+  await expect(options.first(), "and the project's own").toContainText("zen-comp", { timeout: 10_000 });
+});
+
+test("a new session loads the systems the last one loaded, and ⌘B loads a file's dependencies", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-again");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const root = join(parent, "zen-again");
+  const asd = join(root, "zen-again.asd");
+  writeFileSync(asd, readFileSync(asd, "utf8").replace(":depends-on ()", ':depends-on ("split-sequence")'));
+  writeFileSync(
+    join(root, "src/main.lisp"),
+    '(in-package #:zen-again)\n\n(defun greet (name)\n  (format nil "Hello, ~a!" name))\n\n(defun parts (s)\n  (split-sequence:split-sequence #\\, s))\n\n(defun main ()\n  (write-line (greet "world")))\n',
+  );
+  const repl = page.locator(".repl-buffer");
+
+  await page.locator(".tab", { hasText: "main.lisp" }).click();
+  await expect(page.locator(".editor-host .cm-content")).toContainText("split-sequence:split-sequence");
+  await page.locator(".editor-host .cm-content").click();
+  await page.keyboard.press("Meta+b");
+  await page.locator(".panel-tab", { hasText: "REPL" }).click();
+  await expect(repl, "⌘B loads split-sequence first, so the file compiles").toContainText(/Compiled main\.lisp in [\d.]+s: 0 notes/, { timeout: 60_000 });
+
+  await page.locator(".system").first().getByRole("button", { name: "Load" }).click();
+  await expect(page.getByText("load zen-again: done")).toBeVisible({ timeout: 60_000 });
+  await page.locator(".status-pill").click();
+  await expect(repl, "a new Lisp loads what the last one loaded").toContainText("Loading zen-again, as in the last session", { timeout: 60_000 });
+  await expect(page.getByText("load zen-again: done"), "the reload finishes, after the first load's message").toHaveCount(2, { timeout: 60_000 });
+  await page.locator(".panel-tab", { hasText: "REPL" }).click();
+  await replEval(page, '(zen-again::parts "a,b")');
+  await expect(repl, "with split-sequence loaded again").toContainText('("a" "b")');
+});
+
+test("a check in a new session loads the system's dependencies, so a package they define is known", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-nick");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const root = join(parent, "zen-nick");
+  const asd = join(root, "zen-nick.asd");
+  writeFileSync(asd, readFileSync(asd, "utf8").replace(":depends-on ()", ':depends-on ("split-sequence")'));
+  writeFileSync(
+    join(root, "src/package.lisp"),
+    "(defpackage #:zen-nick\n  (:use #:cl)\n  (:local-nicknames (#:s #:split-sequence))\n  (:export #:main))\n\n(in-package #:zen-nick)\n\n(defun parts (x)\n  (s:split-sequence #\\, x)\n  (nowhere))\n",
+  );
+  const editor = page.locator(".editor-host");
+  await page.getByTestId("file-tree").getByText("src").click();
+  await page.getByTestId("file-tree").getByText("package.lisp").click();
+  await expect(editor.locator(".cm-lintRange-warning"), "the check reached the end of the file").toHaveText(["nowhere"], { timeout: 60_000 });
+  await expect(editor.locator(".cm-lintRange-error"), "split-sequence is known to the DEFPACKAGE").toHaveCount(0);
+});
+
+test("themes: built-in ones per appearance, and the user's own from the themes folder", async ({ page }) => {
+  await fresh(page);
+  const settings = page.getByTestId("settings");
+  const color = (token: string) => page.evaluate((t) => getComputedStyle(document.documentElement).getPropertyValue(t).trim(), token);
+  await page.keyboard.press("Meta+,");
+  await settings.getByRole("combobox", { name: "Dark theme" }).selectOption({ label: "Nord" });
+  await settings.getByRole("button", { name: "Dark" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect.poll(() => color("--bg"), "Nord's background").toBe("#2e3440");
+  await settings.getByRole("button", { name: "Light", exact: true }).click();
+  await expect.poll(() => color("--bg"), "the light theme is ZenLisp's own").toBe("#fbfbfa");
+
+  const dir = (await settings.getByTestId("themes-dir").textContent())!;
+  writeFileSync(join(dir, "paper.json"), JSON.stringify({ name: "Paper", kind: "light", colors: { bg: "#fffff0", "--syn-string": "#a31515" } }));
+  writeFileSync(join(dir, "broken.json"), JSON.stringify({ kind: "light", colors: { background: "#fff" } }));
+  await settings.getByRole("button", { name: "Reload Themes" }).click();
+  await expect(settings.getByTestId("theme-problem"), "a mistake in a file is named").toHaveText('broken.json: no color is named "background"');
+  await settings.getByRole("combobox", { name: "Light theme" }).selectOption({ label: "Paper" });
+  await expect.poll(() => color("--bg"), "the user's theme applies").toBe("#fffff0");
+  expect(await color("--syn-string")).toBe("#a31515");
+  expect(await color("--text"), "colors it leaves out keep ZenLisp's").toBe("#1d1d1f");
+  await shots(page, "30-settings-theme");
+  await settings.getByRole("combobox", { name: "Light theme" }).selectOption({ label: "ZenLisp Light" });
+  await settings.getByRole("combobox", { name: "Dark theme" }).selectOption({ label: "ZenLisp Dark" });
+  await settings.getByRole("button", { name: "Match System" }).click();
+  await expect.poll(() => color("--syn-string"), "switching back removes the theme's colors").toBe("#b4521b");
+});
+
+test("a plugin adds a command with a key, a setting, a save hook and a REPL command", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-plug");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const settings = page.getByTestId("settings");
+  await page.keyboard.press("Meta+,");
+  await settings.getByRole("button", { name: "Plugins", exact: true }).click();
+  const plugin = join((await settings.getByTestId("plugins-dir").textContent())!, "demo.lisp");
+  writeFileSync(
+    plugin,
+    `(defpackage #:demo (:use #:cl) (:local-nicknames (#:zp #:zenlisp-plugin)))
+(in-package #:demo)
+(zp:define-setting wrap-with :type :choice :choices ("time" "progn") :default "time" :title "Wrap with")
+(zp:define-command wrap-form (context) (:title "Wrap Form" :key "Mod-Alt-j")
+  (let ((form (zp:context-form context)))
+    (zp:replace-range (zp:form-start form) (zp:form-end form) (format nil "(~a ~a)" (zp:setting 'wrap-with) (zp:form-text form)))))
+(zp:add-hook :before-save
+  (lambda (path text)
+    (declare (ignore path))
+    (let ((at (search ";; todo" text))) (when at (zp:replace-range at (+ at 7) ";; done")))))
+(zp:add-hook :repl-input
+  (lambda (input) (when (string= (string-trim " " input) ",hello") (format t "hello from a plugin~%") :handled)))
+`,
+  );
+  try {
+    await settings.getByRole("button", { name: "Reload Plugins" }).click();
+    await expect(settings.getByTestId("plugin")).toHaveText(["demo"]);
+    await expect(settings.getByRole("combobox", { name: "demo: Wrap with" })).toHaveValue("time");
+    await shots(page, "31-settings-plugins");
+    await settings.getByRole("button", { name: "Done" }).click();
+
+    const editor = page.locator(".editor-host");
+    await editor.locator(".cm-line", { hasText: "(defun greet" }).click();
+    await page.keyboard.press("Meta+Alt+j");
+    await expect(editor.locator(".cm-content"), "the plugin's key runs its command").toContainText("(time (defun greet");
+    await page.keyboard.press("Meta+z");
+
+    await page.keyboard.press("Meta+,");
+    await settings.getByRole("button", { name: "Plugins", exact: true }).click();
+    await settings.getByRole("combobox", { name: "demo: Wrap with" }).selectOption("progn");
+    await settings.getByRole("button", { name: "Done" }).click();
+    await editor.locator(".cm-line", { hasText: "(defun greet" }).click();
+    await page.keyboard.press("Meta+Shift+P");
+    await page.getByPlaceholder("Type a command…").fill("Wrap Form");
+    await page.keyboard.press("Enter");
+    await expect(editor.locator(".cm-content"), "the palette runs it, with the setting's new value").toContainText("(progn (defun greet");
+    await page.keyboard.press("Meta+z");
+
+    await editor.locator(".cm-line").first().click();
+    await page.keyboard.press("Escape");
+    await page.keyboard.type("O;; todo");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Meta+s");
+    const main = join(parent, "zen-plug/src/main.lisp");
+    await expect.poll(() => readFileSync(main, "utf8"), { message: "the before-save hook edits what is written" }).toContain(";; done");
+    await expect(editor.locator(".cm-content"), "and the editor shows the edit").toContainText(";; done");
+
+    await page.locator(".panel-tab", { hasText: "REPL" }).click();
+    await replEval(page, ",hello");
+    await expect(page.locator(".repl-buffer"), "a REPL hook handles its own command").toContainText("hello from a plugin");
+  } finally {
+    rmSync(plugin, { force: true });
+  }
+});
+
+test("word wrap turns on and off from ⌥Z and Settings", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-wrap");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const content = page.locator(".editor-host .cm-content");
+  await expect(content, "lines do not wrap at first").not.toHaveClass(/cm-lineWrapping/);
+  await content.click();
+  await page.keyboard.press("Alt+z");
+  await expect(content, "⌥Z wraps them").toHaveClass(/cm-lineWrapping/);
+  await page.keyboard.press("Meta+,");
+  await expect(page.getByTestId("settings").getByRole("switch", { name: "Wrap long lines" })).toBeChecked();
+  await page.getByTestId("settings").getByRole("switch", { name: "Wrap long lines" }).uncheck();
+  await page.getByTestId("settings").getByRole("button", { name: "Done" }).click();
+  await expect(content, "and Settings turns it off").not.toHaveClass(/cm-lineWrapping/);
+});
+
+test("K shows a symbol's documentation in a popup at the cursor", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-k");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const editor = page.locator(".editor-host");
+  const tip = editor.locator(".cm-doc-tip");
+  await editor.locator(".cm-line", { hasText: "(format nil" }).getByText("format").click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Shift+K");
+  await expect(tip, "K shows the doc where the symbol is").toContainText(/destination|control-string/i, { timeout: 10_000 });
+  await page.keyboard.press("l");
+  await expect(tip, "moving the cursor closes it").toHaveCount(0);
+  await page.keyboard.press("Shift+K");
+  await expect(tip).toBeVisible({ timeout: 10_000 });
+  await page.keyboard.press("Escape");
+  await expect(tip, "and so does Escape").toHaveCount(0);
+  await expect(page.locator(".statusbar .mode")).toHaveText("normal");
+  await expect(editor.locator(".cm-content"), "nothing is added to the code").not.toContainText("Lambda-list");
+});
+
+test("a Markdown file previews rendered, without running HTML it holds", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-md");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  writeFileSync(
+    join(parent, "zen-md/README.md"),
+    "# zen-md\n\nSee [the main file](src/main.lisp).\n\n| Key | Does |\n| --- | --- |\n| ⌘B | compile |\n\n```lisp\n(greet \"world\")\n```\n\n<script>window.mdRan = true</script>\n\n![diagram](docs/diagram.png)\n",
+  );
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.getByTestId("file-tree").getByText("README.md").click();
+  await page.getByRole("button", { name: "Preview" }).click();
+  const preview = page.getByTestId("markdown-preview");
+  await expect(preview.locator("h1")).toHaveText("zen-md");
+  await expect(preview.locator("table td").first()).toHaveText("⌘B");
+  await expect(preview.locator("pre code")).toContainText('(greet "world")');
+  await expect(preview, "HTML in the file shows as text").toContainText("<script>window.mdRan = true</script>");
+  expect(await page.evaluate(() => (window as unknown as { mdRan?: boolean }).mdRan), "and does not run").toBeUndefined();
+  await expect(preview.locator(".md-image"), "a local image shows its description").toHaveText("diagram");
+  await shots(page, "35-markdown-preview");
+
+  await page.keyboard.press("Meta+Shift+V");
+  await expect(preview, "⇧⌘V shows the text again").toHaveCount(0);
+  await page.locator(".editor-host .cm-content").click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.type("ggA, edited");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Meta+Shift+V");
+  await expect(preview.locator("h1"), "the preview follows unsaved edits").toHaveText("zen-md, edited");
+  await preview.getByRole("link", { name: "the main file" }).click();
+  await expect(page.locator(".tab.active"), "a link to a project file opens it").toHaveText(/main\.lisp/);
 });

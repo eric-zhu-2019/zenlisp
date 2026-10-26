@@ -21,6 +21,12 @@ pub fn ignored(path: &Path) -> bool {
 /// paths. Dropping the returned watcher stops it.
 pub fn watch(root: &Path, on_change: impl Fn(Vec<String>) + Send + 'static) -> notify::Result<notify::RecommendedWatcher> {
     let (tx, mut rx) = mpsc::unbounded_channel::<PathBuf>();
+    // FSEvents reports real paths, such as /private/var for /var; the editor names files by the root as given.
+    let (given, real) = (root.to_path_buf(), root.canonicalize().unwrap_or_else(|_| root.to_path_buf()));
+    let spell = move |p: PathBuf| match p.strip_prefix(&real) {
+        Ok(rest) if real != given => given.join(rest),
+        _ => p,
+    };
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         if let Ok(e) = event {
             for p in e.paths {
@@ -35,7 +41,7 @@ pub fn watch(root: &Path, on_change: impl Fn(Vec<String>) + Send + 'static) -> n
             while let Ok(Some(p)) = tokio::time::timeout(SETTLE, rx.recv()).await {
                 batch.insert(p);
             }
-            let paths: Vec<String> = batch.into_iter().filter(|p| !ignored(p)).map(|p| p.display().to_string()).collect();
+            let paths: Vec<String> = batch.into_iter().filter(|p| !ignored(p)).map(|p| spell(p).display().to_string()).collect();
             if !paths.is_empty() {
                 on_change(paths);
             }

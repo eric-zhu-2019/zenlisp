@@ -41,11 +41,48 @@ export function rememberProject(root: string) {
     localStorage.setItem(RECENT, JSON.stringify(list));
   } catch {
   }
+  void syncRecentMenu();
+}
+
+export function clearRecentProjects() {
+  try {
+    localStorage.removeItem(RECENT);
+  } catch {
+  }
+  void syncRecentMenu();
+}
+
+/** Shows the recent projects in File ▸ Open Recent. */
+export async function syncRecentMenu() {
+  if (!inTauri) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("set_recent_projects", { paths: recentProjects() }).catch(() => null);
 }
 
 export async function revealInFinder(path: string) {
   if (inTauri) {
     const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
     await revealItemInDir(path);
+  }
+}
+
+const LOADED = "zenlisp.loaded";
+
+/** The systems loaded in a project's last session, which its next session loads again. */
+export function loadedSystems(root: string): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(LOADED) ?? "{}")[root] ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export function rememberLoaded(root: string, system: string) {
+  try {
+    const all = JSON.parse(localStorage.getItem(LOADED) ?? "{}");
+    const list: string[] = all[root] ?? [];
+    if (!list.includes(system)) all[root] = [...list, system];
+    localStorage.setItem(LOADED, JSON.stringify(all));
+  } catch {
   }
 }

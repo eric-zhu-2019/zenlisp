@@ -5,6 +5,7 @@ import type { AssistantStatus } from "../protocol/AssistantStatus";
 import type { McpInfo } from "../protocol/McpInfo";
 import { set, useStore, type ChatItem } from "../store";
 import { Icon } from "./Icon";
+import type { SessionInfo } from "../protocol/SessionInfo";
 
 function Inline({ text }: { text: string }) {
   const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
@@ -186,6 +187,58 @@ function Setup({ status, onSaved }: { status: AssistantStatus | null; onSaved: (
   );
 }
 
+let restored = false;
+
+/** Opening the assistant the first time reopens the project's latest conversation, if the chat is empty. */
+async function restoreLatest() {
+  if (restored) return;
+  restored = true;
+  if (useStore.getState().chat.length || useStore.getState().chatBusy) return;
+  const root = useStore.getState().status.project?.root ?? null;
+  const latest = (await actions.assistantSessions()).find((s) => s.project === root);
+  if (latest && useStore.getState().chat.length === 0) await actions.openAssistantSession(latest.id);
+}
+
+function ago(seconds: number) {
+  const d = Date.now() / 1000 - seconds;
+  if (d < 90) return "just now";
+  if (d < 3600) return `${Math.round(d / 60)} min ago`;
+  if (d < 86400) return `${Math.round(d / 3600)} h ago`;
+  return new Date(seconds * 1000).toLocaleDateString();
+}
+
+/** Saved conversations, the latest first, to continue or delete. */
+function SessionList({ onClose }: { onClose: () => void }) {
+  const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
+  const root = useStore((s) => s.status.project?.root ?? null);
+  const load = () => actions.assistantSessions().then(setSessions);
+  useEffect(() => void load(), []);
+  return (
+    <div className="session-list" role="menu" aria-label="Earlier conversations">
+      {sessions === null ? (
+        <div className="session-note">Loading…</div>
+      ) : sessions.length === 0 ? (
+        <div className="session-note">No earlier conversations yet.</div>
+      ) : (
+        sessions.map((s) => (
+          <div key={s.id} className="session">
+            <button role="menuitem" className="session-open" title={s.title} onClick={() => void actions.openAssistantSession(s.id).then(onClose)}>
+              <span className="session-title">{s.title}</span>
+              <span className="session-meta">
+                {s.project && s.project !== root ? `${s.project.split("/").pop()} · ` : ""}
+                {ago(s.updated)}
+              </span>
+            </button>
+            <button className="icon-btn" title="Delete this conversation" onClick={() => void actions.deleteAssistantSession(s.id).then(load)}>
+              <Icon name="x" size={10} />
+            </button>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 export function Chat() {
   const chat = useStore((s) => s.chat);
   const busy = useStore((s) => s.chatBusy);
@@ -193,11 +246,13 @@ export function Chat() {
   const [showSetup, setShowSetup] = useState(false);
   const [text, setText] = useState("");
   const [withContext, setWithContext] = useState(true);
+  const [showHistory, setShowHistory] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
 
   const refresh = () => actions.request({ type: "assistantStatus" }).then((r) => r.type === "assistant" && setStatus(r));
   useEffect(() => {
     refresh();
+    void restoreLatest();
   }, []);
   useLayoutEffect(() => {
     if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
@@ -217,7 +272,10 @@ export function Chat() {
       <div className="right-header">
         <Icon name="sparkle" />
         <span className="title">Assistant</span>
-        <button className="icon-btn" title="New conversation" onClick={() => (actions.request({ type: "assistantReset" }), set({ chat: [] }))}>
+        <button className="icon-btn" title="Earlier conversations" aria-expanded={showHistory} onClick={() => setShowHistory(!showHistory)}>
+          <Icon name="history" size={13} />
+        </button>
+        <button className="icon-btn" title="New conversation" onClick={() => (actions.request({ type: "assistantReset" }), set({ chat: [] }), setShowHistory(false))}>
           <Icon name="plus" size={12} />
         </button>
         <button className="icon-btn" title="Assistant settings" onClick={() => setShowSetup(!showSetup)}>
@@ -227,6 +285,7 @@ export function Chat() {
           <Icon name="x" size={12} />
         </button>
       </div>
+      {showHistory && <SessionList onClose={() => setShowHistory(false)} />}
       <div className="chat-scroll" ref={scroller}>
         {(needsSetup || showSetup) && (
           <Setup

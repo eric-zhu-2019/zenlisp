@@ -158,6 +158,13 @@ export class TranscriptRenderer {
     d.addEventListener("scroll", () => {
       if (d.scrollHeight - d.scrollTop - d.clientHeight < 60) this.following = true;
     });
+    // The debugger opening beside the REPL narrows it, so lines wrap and the
+    // text grows below the view, with no new output to scroll it back.
+    const pin = new ResizeObserver(() => {
+      if (this.following) d.scrollTop = d.scrollHeight;
+    });
+    pin.observe(d);
+    pin.observe(view.contentDOM);
   }
 
   sync(view: EditorView, items: TranscriptItem[], pkg: string) {
@@ -211,9 +218,10 @@ export class TranscriptRenderer {
     this.softBreak = !endsLine;
     this.follow(view);
     const stick = this.following;
+    const end = view.state.doc.length + text.length - (continuing ? l.promptFrom - at : 0);
     view.dispatch({
       changes: { from: at, to: continuing ? l.promptFrom : at, insert: text },
-      effects: [appended.of({ at, marks, inputs }), ...(stick ? [EditorView.scrollIntoView(at + text.length + 1, { y: "end" })] : [])],
+      effects: [appended.of({ at, marks, inputs }), ...(stick ? [EditorView.scrollIntoView(end, { y: "end" })] : [])],
       annotations: [transcriptWrite.of(true)],
     });
     if (view.state.field(layout).promptFrom > this.limit) this.trim(view);

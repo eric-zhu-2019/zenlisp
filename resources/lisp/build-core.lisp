@@ -20,5 +20,6 @@
 (load (merge-pathnames "breakpoints.lisp" (env-dir "ZENLISP_LISP_DIR")))
 (load (merge-pathnames "tools.lisp" (env-dir "ZENLISP_LISP_DIR")))
 (load (merge-pathnames "tests.lisp" (env-dir "ZENLISP_LISP_DIR")))
+(load (merge-pathnames "plugins.lisp" (env-dir "ZENLISP_LISP_DIR")))
 
 (sb-ext:save-lisp-and-die (sb-ext:posix-getenv "ZENLISP_CORE_OUT"))

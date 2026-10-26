@@ -55,7 +55,8 @@ Subagents took on separate pieces. The coding agents each worked in their own gi
   breakpoints and stepping.
 - **Checking as you type.** Each file is compiled in the background, without
   loading it, and warnings mark the exact symbol. Saving compiles only the
-  top-level forms that changed into the running Lisp.
+  top-level forms that changed into the running Lisp, and so does a change to
+  a loaded file from git or another editor.
 - **Navigation.** `gd` goes to local bindings first, then to Lisp's own record
   of a definition, then to definitions in code not loaded yet. ⌃O goes back.
 - **Tools.** Trace and Profile panels, macroexpansion in place, disassembly,
@@ -65,8 +66,18 @@ Subagents took on separate pieces. The coding agents each worked in their own gi
 - **Projects.** ASDF systems with Quicklisp, qlot, ocicl or vendored
   dependencies, a dependency editor, and startup images.
 - **Editor.** Vim keys, SLIME's Emacs sequences, parinfer, structural editing,
-  split panes, a git gutter with inline diffs, and a choice of editor and
-  interface fonts.
+  split panes, a git gutter with inline diffs, word wrap (⌥Z), Markdown preview
+  (⇧⌘V), a choice of editor and interface fonts, and themes. Solarized,
+  Nord and Gruvbox come built in, picked separately for light and dark, and
+  your own are JSON files in the themes folder that Settings opens. `K` shows a symbol's
+  documentation in a popup, and completion offers package and system names
+  where code names them, such as `(:use #:alexan`. ⌃N and ⌃P move through the
+  completion list.
+- **Plugins.** Lisp files in the plugins folder add commands with keys,
+  checks, settings, and hooks on saving, loading, tests, the debugger and the
+  REPL. See [docs/plugins.md](docs/plugins.md).
+- **Sessions.** A project's next session loads the systems its last one
+  loaded, and assistant conversations are kept, listed and continued.
 - **Mac app.** Signed releases that carry their own SBCL, and in-app updates.
 
 ![Ask AI to fix: the assistant reads the warning and edits the file](docs/screenshots/ask-ai-to-fix.png)
@@ -94,8 +105,13 @@ files change.
 
 ## Work in a project
 
-Open a folder with **Open Project…**, or create one with **New Project**. A new
-project has an ASDF system, a test system, and an executable build target.
+Open a folder with **Open Project…** (⌘O), or create one with **New Project**
+(⇧⌘N). Both are in the File menu, with Open Recent and Close Project, and in the
+menu under the project's name in the title bar. Leaving a project with unsaved
+files asks to save them first. A new
+project has an ASDF system, a test system, and an executable build target. It
+takes its dependencies from Quicklisp, or from ocicl with each version pinned in
+`ocicl.csv`; ocicl needs `brew install ocicl` and `ocicl setup` once.
 
 ZenLisp finds the dependency manager from the files in the project root:
 
@@ -106,11 +122,17 @@ ZenLisp finds the dependency manager from the files in the project root:
 | `vendor/`, `lib/`, `third_party/`, or `deps/` holding `.asd` files | vendor | those directories, added to the ASDF source registry |
 | none of the above | Quicklisp | `~/quicklisp`, `~/.quicklisp`, or Roswell's Quicklisp |
 
-qlot replaces the global Quicklisp, so a project with a `qlfile` never loads
-both.
+The **Packages** tab lists what the project's systems depend on, with each
+one's version, where it comes from and whether it is loaded. It adds and
+removes dependencies, updates one (with ocicl or qlot) or all of them, and with
+ocicl pins a dependency to any version the registry offers.
+
+qlot and ocicl replace the global Quicklisp, so a project with a `qlfile` or
+`ocicl.csv` does not load it.
 
 The **Systems** sidebar lists every system in the project's `.asd` files.
-**Load** loads a system and fetches its dependencies. **Test** runs
+**Run** loads a system and calls its `:entry-point` in the REPL, as its built
+program would start. **Load** loads a system and fetches its dependencies. **Test** runs
 `asdf:test-system`. **Build** runs `asdf:make` in a separate SBCL and streams
 the output to the **Output** panel.
 
@@ -164,7 +186,8 @@ ones you use most:
 SLIME's Emacs sequences work too, in any Vim mode: `C-x C-e` evaluates the
 form before the cursor, `C-M-x` the top-level form, `C-c C-c` compiles it,
 `C-c C-k` compiles and loads the file, `M-.` and `M-,` jump to a definition
-and back, and `C-c C-z` switches to the REPL. The status bar shows a prefix
+and back, and `C-c C-z` switches to the REPL. ⌘J goes to the REPL, and from the
+REPL back to the editor. The status bar shows a prefix
 while you type it, and `C-g` cancels.
 
 Hover a symbol to see its documentation, or its argument list when it has
@@ -182,7 +205,8 @@ form, so `daf` and `cif` work as you would expect.
 The file tree creates, renames, and moves files to the Trash. When another
 program changes an open file, ZenLisp reloads it if you have no unsaved
 edits, and asks otherwise. It also asks before closing a file or quitting
-with unsaved changes.
+with unsaved changes. Files outside the project, such as SBCL's sources that
+go to definition opens, are read-only and marked with a lock.
 
 **Search** in the sidebar finds and replaces across the project, with the
 same `.gitignore` rules as ripgrep. The **Problems** panel lists compiler

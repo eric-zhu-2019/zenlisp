@@ -158,7 +158,11 @@ impl Session {
             cmd.arg("--no-userinit");
         }
         cmd.arg("--eval")
-            .arg(format!("(zenlisp:start-server :debug-code {})", if cfg.debug_code { "t" } else { "nil" }))
+            .arg(format!(
+                "(zenlisp:start-server :debug-code {} :plugins {})",
+                if cfg.debug_code { "t" } else { "nil" },
+                Sexp::Str(format!("{}/", cfg.data_dir.join("plugins").display()))
+            ))
             .current_dir(&cfg.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

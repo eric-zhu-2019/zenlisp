@@ -1,8 +1,8 @@
-import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
+import { autocompletion, completionKeymap, moveCompletionSelection } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { bracketMatching } from "@codemirror/language";
 import { EditorState, Prec } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { drawSelection, EditorView, keymap } from "@codemirror/view";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as actions from "../actions";
 import { lispCompletions, updateArglist } from "../editor/commands";
@@ -116,6 +116,8 @@ function ReplBuffer({ source, onSearch }: { source: Source; onSearch: () => void
           lisp(),
           lispIndentation(() => useStore.getState().indentSpecs),
           EditorView.lineWrapping,
+          // A drawn cursor, styled to be seen; the native caret is thin and pale.
+          drawSelection(),
           bracketMatching(),
           structureExtension(),
           Prec.highest(keymap.of(structuralKeymap)),
@@ -123,9 +125,12 @@ function ReplBuffer({ source, onSearch }: { source: Source; onSearch: () => void
           autocompletion({ override: [lispCompletions], activateOnTypingDelay: 120 }),
           Prec.high(
             keymap.of([
+              { key: "Ctrl-n", run: moveCompletionSelection(true) },
+              { key: "Ctrl-p", run: moveCompletionSelection(false) },
               { key: "Ctrl-c", run: () => (actions.interrupt(), true) },
               { key: "Ctrl-r", run: () => (searchRef.current(), true) },
               { key: "Mod-k", run: () => (clearTranscript(source), true) },
+              { key: "Ctrl-l", run: () => (clearTranscript(source), true) },
             ]),
           ),
           keymap.of([...completionKeymap, ...historyKeymap, ...defaultKeymap]),

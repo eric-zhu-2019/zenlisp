@@ -181,6 +181,9 @@ textarea {
 }
 
 .titlebar {
+  /* Its blur makes a stacking context; above the workspace, its menus are too. */
+  position: relative;
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -199,11 +202,15 @@ textarea {
 
 .workspace {
   display: grid;
-  grid-template-columns: var(--sidebar-w, 240px) 1fr auto;
+  /* Capped by the window too, so a narrower window keeps room for the editor. */
+  grid-template-columns: min(var(--sidebar-w, 240px), 45vw) 1fr auto;
   min-height: 0;
 }
 
 .sidebar {
+  /* Above the editor, so the half of its edge handle over the editor takes the pointer. */
+  position: relative;
+  z-index: 2;
   background: var(--bg-sidebar);
   backdrop-filter: blur(20px);
   border-right: 1px solid var(--border);
@@ -230,7 +237,9 @@ textarea {
 }
 
 .right {
-  width: 360px;
+  position: relative;
+  z-index: 2;
+  width: min(var(--right-w, 360px), 60vw);
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
   display: flex;
@@ -2629,6 +2638,9 @@ textarea {
   font-size: 11.5px;
   line-height: 1.4;
 }
+.setting-hint.theme-problem {
+  color: var(--danger);
+}
 .toggle {
   display: inline-flex;
   align-items: center;
@@ -2906,4 +2918,414 @@ textarea {
 }
 .path-input input.font-name {
   font-family: var(--sans);
+}
+/* Compiler messages in hover and cursor boxes can be selected and copied. */
+.cm-tooltip-lint {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.cm-tooltip-lint .cm-diagnosticAction {
+  cursor: default;
+}
+.tab-lock {
+  display: inline-flex;
+  margin-right: 4px;
+  color: var(--text-faint);
+}
+/* The REPL's cursor, as easy to find as the editor's. */
+.repl-buffer .cm-content {
+  caret-color: transparent;
+}
+.repl-buffer .cm-cursor {
+  border-left: 2px solid var(--accent);
+}
+/* An editor without focus shows its cursor hollow, so it is clear where typing goes. */
+.editor-host .cm-editor:not(.cm-focused) .cm-fat-cursor {
+  background: none !important;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 80%, transparent);
+  color: inherit !important;
+}
+.dialog-hint {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+/* The project menu in the title bar. */
+.project-menu {
+  position: relative;
+}
+.project-menu .project-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.project-menu .project-name:hover,
+.project-menu .project-name[aria-expanded="true"] {
+  background: var(--bg-hover);
+}
+.project-menu .chev {
+  color: var(--text-faint);
+  font-size: 9px;
+}
+.project-menu .menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 240px;
+  max-width: 360px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  box-shadow: var(--shadow);
+}
+.project-menu .menu button {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  text-align: left;
+  color: var(--text);
+  white-space: nowrap;
+}
+.project-menu .menu button:hover {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.project-menu .menu button:hover .kbd,
+.project-menu .menu button:hover .menu-path {
+  color: var(--accent-text);
+}
+.project-menu .menu .kbd {
+  margin-left: auto;
+}
+.project-menu .menu-path {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.project-menu .menu-label {
+  padding: 6px 8px 2px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.project-menu .menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+.dialog-hint.error-hint {
+  color: var(--danger);
+}
+/* The Packages tab: the project's dependencies. */
+.packages {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.packages-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 6px;
+}
+.packages-bar .select {
+  min-width: 0;
+  max-width: 120px;
+}
+.packages-bar .grow {
+  flex: 1;
+}
+.packages-empty {
+  padding: 8px 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.packages-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 8px;
+  overflow: auto;
+}
+.pkg {
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.pkg:hover {
+  background: var(--bg-hover);
+}
+.pkg-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+.pkg-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pkg-name {
+  flex: 0 1 auto;
+  min-width: 3ch;
+}
+/* The version keeps its room; a long name shortens first. */
+.pkg-version {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 0 auto;
+  max-width: 14ch;
+}
+.pkg-source {
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.pkg-source.missing {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+.pkg-actions {
+  display: none;
+  gap: 2px;
+}
+.pkg:hover .pkg-actions,
+.pkg:focus-within .pkg-actions {
+  display: inline-flex;
+}
+.pkg:hover .pkg-source,
+.pkg:focus-within .pkg-source {
+  display: none;
+}
+.pkg-users {
+  padding-left: 14px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.pkg-versions {
+  margin: 4px 0 2px 14px;
+  padding: 4px;
+  border-radius: 6px;
+  background: var(--bg-input);
+  box-shadow: var(--shadow);
+}
+.pkg-versions button {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: left;
+}
+.pkg-versions button:hover {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.pkg-versions button.current {
+  font-weight: 600;
+}
+.pkg-note {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-family: var(--sans);
+}
+
+/* The draggable edge of a side panel, over its border. */
+/* Inside the panel along its border: the panel clips what reaches past it. */
+.edge-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  z-index: 5;
+  cursor: col-resize;
+}
+.edge-handle.right {
+  right: 0;
+}
+.edge-handle.left {
+  left: 0;
+}
+.edge-handle.right:hover,
+.edge-handle.right:focus-visible,
+body.resizing .edge-handle.right {
+  background: linear-gradient(to left, var(--accent) 2px, transparent 2px);
+  outline: none;
+}
+.edge-handle.left:hover,
+.edge-handle.left:focus-visible,
+body.resizing .edge-handle.left {
+  background: linear-gradient(to right, var(--accent) 2px, transparent 2px);
+  outline: none;
+}
+body.resizing,
+body.resizing * {
+  cursor: col-resize !important;
+}
+/* The assistant's earlier conversations. */
+.session-list {
+  max-height: 45%;
+  overflow: auto;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.session {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+}
+.session:hover {
+  background: var(--bg-hover);
+}
+.session .icon-btn {
+  visibility: hidden;
+}
+.session:hover .icon-btn {
+  visibility: visible;
+}
+.session-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 5px 8px;
+  text-align: left;
+}
+.session-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.session-meta,
+.session-note {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.session-note {
+  padding: 8px;
+}
+/* A Markdown file, rendered, over its editor. */
+.md-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: auto;
+  padding: 24px 32px 48px;
+  background: var(--bg-editor);
+  color: var(--text);
+  font: 14px/1.65 var(--sans);
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.md-preview > * {
+  max-width: 760px;
+}
+.md-preview h1,
+.md-preview h2,
+.md-preview h3 {
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 1.4em 0 0.5em;
+}
+.md-preview h1 {
+  font-size: 1.8em;
+  margin-top: 0.2em;
+}
+.md-preview h2 {
+  font-size: 1.35em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--border);
+}
+.md-preview a {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+.md-preview a:hover {
+  text-decoration: underline;
+}
+.md-preview code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+}
+.md-preview pre {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  overflow: auto;
+  line-height: 1.45;
+}
+.md-preview pre code {
+  padding: 0;
+  background: none;
+}
+.md-preview table {
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+.md-preview th,
+.md-preview td {
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.md-preview th {
+  background: var(--bg-panel);
+  font-weight: 600;
+}
+.md-preview blockquote {
+  margin: 1em 0;
+  padding: 0 1em;
+  color: var(--text-dim);
+  border-left: 3px solid var(--border-strong);
+}
+.md-preview img {
+  max-width: 100%;
+}
+.md-preview .md-image {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.md-preview hr {
+  border: none;
+  border-top: 1px solid var(--border);
+}
+.md-toggle {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  z-index: 4;
 }

@@ -1,4 +1,5 @@
-import { hoverTooltip, type Tooltip } from "@codemirror/view";
+import { StateEffect, StateField } from "@codemirror/state";
+import { EditorView, hoverTooltip, showTooltip, type Tooltip } from "@codemirror/view";
 import * as actions from "../actions";
 import { isSymbolChar, packageAt, symbolAt } from "../lisp/forms";
 import { formAt, parse } from "../lisp/tree";
@@ -56,3 +57,55 @@ export const lispHover = hoverTooltip(
   },
   { hoverTime: 450 },
 );
+
+type DocTip = { from: number; to: number; text: string };
+
+const setDocTip = StateEffect.define<DocTip | null>();
+
+/** The doc K shows at the symbol under the cursor, until the cursor moves or the text changes. */
+const docTip = StateField.define<DocTip | null>({
+  create: () => null,
+  update(tip, tr) {
+    for (const e of tr.effects) if (e.is(setDocTip)) return e.value;
+    return tr.docChanged || tr.selection ? null : tip;
+  },
+  provide: (f) =>
+    showTooltip.compute([f], (state): Tooltip | null => {
+      const tip = state.field(f);
+      if (!tip) return null;
+      return {
+        pos: tip.from,
+        end: tip.to,
+        above: true,
+        create: () => {
+          const dom = document.createElement("div");
+          dom.className = "cm-lisp-doc cm-doc-tip";
+          dom.textContent = tip.text;
+          return { dom };
+        },
+      };
+    }),
+});
+
+export const docTips = [
+  docTip,
+  EditorView.domEventHandlers({
+    keydown(e, view) {
+      if (e.key !== "Escape" || !view.state.field(docTip)) return false;
+      view.dispatch({ effects: setDocTip.of(null) });
+      return true;
+    },
+  }),
+];
+
+/** Shows the symbol's doc, or its argument list, in a box at the symbol: Vim's K, as a popup. */
+export function showDocTip(view: EditorView): boolean {
+  const text = view.state.doc.toString();
+  const pos = view.state.selection.main.head;
+  const sym = symbolAt(text, pos) ?? symbolAt(text, pos + 1);
+  if (!sym) return false;
+  void describe(sym.name, packageAt(text, pos) ?? "COMMON-LISP-USER").then((doc) =>
+    view.dispatch({ effects: setDocTip.of({ from: sym.from, to: sym.to, text: doc ?? `No documentation for ${sym.name}` }) }),
+  );
+  return true;
+}

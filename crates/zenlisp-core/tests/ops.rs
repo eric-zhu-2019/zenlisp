@@ -303,7 +303,7 @@ async fn checking_text_reports_notes_without_defining_anything() {
     let s = start().await;
     let c = &s.conn;
     let text = "(defun ck-helper (x) (* x 2))\n\n(defun ck-user (y)\n  (+ (ck-helper y) undefined-zz))\n";
-    let Reply::Compiled { notes, .. } = cl(|package| Op::CheckText { text: text.into(), package }).run(c).await.unwrap() else { panic!() };
+    let Reply::Compiled { notes, .. } = cl(|package| Op::CheckText { text: text.into(), package, file: None }).run(c).await.unwrap() else { panic!() };
     let warning = notes.iter().find(|n| n.message.contains("UNDEFINED-ZZ")).expect("the undefined variable is reported");
     // SBCL places a note at the form it was compiling, here the call holding the variable.
     assert_eq!(warning.location.as_ref().and_then(|l| l.offset), Some(text.find("(+ (ck-helper").unwrap() as i64), "{notes:?}");
@@ -312,9 +312,101 @@ async fn checking_text_reports_notes_without_defining_anything() {
     assert_eq!(value, "NIL", "checking does not load the code");
 
     let unloaded = "(in-package #:ck-not-loaded)\n\n(defun f (x) (+ x missing-yy))\n";
-    let Reply::Compiled { notes, .. } = cl(|package| Op::CheckText { text: unloaded.into(), package }).run(c).await.unwrap() else { panic!() };
+    let Reply::Compiled { notes, .. } = cl(|package| Op::CheckText { text: unloaded.into(), package, file: None }).run(c).await.unwrap() else { panic!() };
     assert!(notes.iter().any(|n| n.message.contains("MISSING-YY")), "a file whose package is not loaded is still checked: {notes:?}");
     let Reply::Evaluated { value, .. } = cl(|package| Op::Eval { form: "(find-package \"CK-NOT-LOADED\")".into(), package }).run(c).await.unwrap() else { panic!() };
     assert_eq!(value, "NIL", "the stand-in package is gone again");
     s.stop().await;
+}
+
+#[tokio::test]
+async fn names_being_typed_are_packages_or_systems_where_the_code_says_so() {
+    let s = start().await;
+    // `^` marks the cursor; the text before it is what the editor sends.
+    let cases = [
+        ("(defpackage #:app\n  (:use #:cl #:alexan^))", Some("package")),
+        ("(defpackage #:app\n  (:local-nicknames (#:a #:alexan^)))", Some("package")),
+        ("(defpackage #:app\n  (:import-from #:split^))", Some("package")),
+        ("(defpackage #:app\n  (:local-nicknames (#:a^ #:alexandria)))", None),
+        ("(defpackage #:app\n  (:import-from #:alexandria #:fla^))", None),
+        ("(defpackage #:app\n  (:export #:ma^))", None),
+        ("(in-package :my-^", Some("package")),
+        ("(in-package \"MY-^\")", Some("package")),
+        ("(defsystem \"app\"\n  :depends-on (\"cl-pp^\"))", Some("system")),
+        ("(defsystem \"app\"\n  :depends-on (:alex^))", Some("system")),
+        ("(ql:quickload :split^)", Some("system")),
+        ("(ql:quickload '(:alexandria :spl^))", Some("system")),
+        ("(list :key^)", None),
+        ("(alexandria:fla^", None),
+        ("(defun f () (mapc^", None),
+        ("(f #\\( \"a;b(\" ; (x\n #| ( |# (in-package #:fo^", Some("package")),
+    ];
+    for (src, want) in cases {
+        let text = src[..src.find('^').unwrap()].to_string();
+        let got = match (Op::DesignatorAt { text }).run(&s.conn).await.unwrap() {
+            Reply::Text { text } => Some(text),
+            Reply::None => None,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(got.as_deref(), want, "{src}");
+    }
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn plugins_add_commands_settings_checks_and_repl_hooks() {
+    let data = std::env::temp_dir().join(format!("zenlisp-plugins-{}", std::process::id()));
+    let plugins = data.join("plugins");
+    std::fs::create_dir_all(&plugins).unwrap();
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/plugins");
+    for f in ["demo.lisp", "broken.lisp"] {
+        std::fs::copy(fixtures.join(f), plugins.join(f)).unwrap();
+    }
+    let mut cfg = SessionConfig::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../resources"));
+    cfg.data_dir = data.clone();
+    let s = Session::start(&cfg).await.expect("sbcl starts");
+    let c = &s.conn;
+    let json = |r: Reply| match r {
+        Reply::Text { text } => serde_json::from_str::<serde_json::Value>(&text).unwrap_or_else(|e| panic!("{e}: {text}")),
+        other => panic!("{other:?}"),
+    };
+
+    let m = json(Op::PluginManifest.run(c).await.unwrap());
+    let broken = m["plugins"].as_array().unwrap().iter().find(|p| p["name"] == "broken").unwrap();
+    assert!(broken["error"].as_str().unwrap().contains("boom"), "a plugin that fails says why: {m}");
+    assert_eq!(m["commands"][0]["id"], "demo/wrap-form", "the other plugins still load");
+    assert_eq!(m["commands"][0]["key"], "Mod-Alt-t");
+    assert_eq!(m["settings"][0]["value"], "time");
+    assert!(m["hooks"].as_array().unwrap().contains(&"repl-input".into()));
+
+    let text = "(defun f () 1)\n(foo)";
+    let run = || cl(|package| Op::RunPluginCommand { id: "demo/wrap-form".into(), file: None, text: text.into(), cursor: 17, selection_from: 17, selection_to: 17, package });
+    let r = json(run().run(c).await.unwrap());
+    assert_eq!(r["effects"][0], serde_json::json!({ "type": "replace", "from": 15, "to": 20, "text": "(time (foo))" }));
+
+    json(Op::SetPluginSetting { id: "DEMO::WRAP-WITH".into(), value: "progn".into() }.run(c).await.unwrap());
+    json(Op::ReloadPlugins.run(c).await.unwrap());
+    let r = json(run().run(c).await.unwrap());
+    assert_eq!(r["effects"][0]["text"], "(progn (foo))", "a setting keeps its value across a reload");
+
+    let Reply::Compiled { notes, .. } = cl(|package| Op::CheckText { text: "(defun g () (eval 1))".into(), package, file: None }).run(c).await.unwrap() else { panic!() };
+    assert!(notes.iter().any(|n| n.message == "EVAL here [no-eval]"), "{notes:?}");
+
+    let file = data.join("compiled.lisp");
+    std::fs::write(&file, "(defun compiled-by-test () 1)\n").unwrap();
+    Op::CompileFile { path: file.to_string_lossy().into(), load: true }.run(c).await.unwrap();
+    let Reply::Evaluated { value, .. } = cl(|package| Op::Eval { form: "demo::*compiled*".into(), package }).run(c).await.unwrap() else { panic!() };
+    assert_eq!(value, "((\"compiled.lisp\" T))", "a compile runs its hook once, and checks run none");
+
+    let mut events = c.subscribe();
+    Op::ReplEval { input: ",hello".into() }.run(c).await.unwrap();
+    let mut output = String::new();
+    while let Ok(Ok(e)) = tokio::time::timeout(Duration::from_millis(500), events.recv()).await {
+        if let Event::Output { text, .. } = e {
+            output.push_str(&text);
+        }
+    }
+    assert!(output.contains("hello from a plugin"), "a REPL hook handles its own input: {output:?}");
+    s.stop().await;
+    let _ = std::fs::remove_dir_all(&data);
 }

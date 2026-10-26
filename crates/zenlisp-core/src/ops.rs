@@ -71,6 +71,9 @@ pub enum Op {
     Step { thread: Thread, frame: i64, how: StepKind },
     #[serde(rename_all = "camelCase")]
     DebuggerAbort { thread: Thread },
+    /// Leaves every debugger level of the thread, back to its top level.
+    #[serde(rename_all = "camelCase")]
+    DebuggerTopLevel { thread: Thread },
     #[serde(rename_all = "camelCase")]
     DebuggerContinue { thread: Thread },
     #[serde(rename_all = "camelCase")]
@@ -118,10 +121,31 @@ pub enum Op {
     EndThread { thread: i64 },
     /// Compiles a buffer's text without loading it, for its compiler notes as it is typed.
     #[serde(rename_all = "camelCase")]
-    CheckText { text: String, package: String },
+    /// `file` is the file the text is from, so the files it depends on compile first.
+    CheckText { text: String, package: String, file: Option<String> },
     /// Systems that could be dependencies: Quicklisp's, then ones ASDF knows.
     #[serde(rename_all = "camelCase")]
     FindSystems { query: String },
+    /// "package" or "system" when the name at the end of `text`, which runs from a
+    /// top-level form's start to the cursor, names one; nothing otherwise.
+    #[serde(rename_all = "camelCase")]
+    DesignatorAt { text: String },
+    /// What the plugins add, as JSON: their commands, settings and hooks, and load errors.
+    PluginManifest,
+    /// Loads the plugins folder again, answering with the new manifest.
+    ReloadPlugins,
+    /// Runs a plugin command on the editor's state. Answers with JSON effects and errors.
+    #[serde(rename_all = "camelCase")]
+    RunPluginCommand { id: String, file: Option<String>, text: String, cursor: i64, selection_from: i64, selection_to: i64, package: String },
+    /// Runs the hooks of an event that happens in the editor, such as "before-save".
+    #[serde(rename_all = "camelCase")]
+    RunPluginHook { event: String, args: Vec<String> },
+    #[serde(rename_all = "camelCase")]
+    SetPluginSetting {
+        id: String,
+        #[ts(type = "boolean | number | string")]
+        value: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
@@ -423,6 +447,16 @@ fn s(x: &str) -> Sexp {
     Sexp::str(x)
 }
 
+/// A setting's value as Lisp reads it: T or NIL, a number, or a string.
+fn json_sexp(v: &serde_json::Value) -> Sexp {
+    match v {
+        serde_json::Value::Bool(true) => Sexp::sym("t"),
+        serde_json::Value::Number(n) => n.as_i64().map(Sexp::Int).unwrap_or_else(|| Sexp::Num(format!("{}d0", n))),
+        serde_json::Value::String(text) => s(text),
+        _ => Sexp::Nil,
+    }
+}
+
 fn quote(x: Sexp) -> Sexp {
     Sexp::list([Sexp::sym("quote"), x])
 }
@@ -543,6 +577,7 @@ impl Op {
                 (rpc(f, [Sexp::Int(*frame)]), *thread)
             }
             DebuggerAbort { thread } => (rpc("swank:sldb-abort", []), *thread),
+            DebuggerTopLevel { thread } => (rpc("swank:throw-to-toplevel", []), *thread),
             DebuggerContinue { thread } => (rpc("swank:sldb-continue", []), *thread),
             InspectCondition { thread } => (rpc("swank:inspect-current-condition", []), *thread),
 
@@ -567,7 +602,27 @@ impl Op {
             ReplSend { .. } | InterruptThread { .. } => (Sexp::Nil, t),
             EndThread { thread } => (rpc("zenlisp::end-thread", [Sexp::Int(*thread)]), t),
             FindSystems { query } => (rpc("zenlisp::find-systems", [s(query)]), t),
-            CheckText { text, .. } => (rpc("zenlisp::check-text", [s(text)]), t),
+            DesignatorAt { text } => (rpc("zenlisp::designator-at", [s(text)]), t),
+            PluginManifest => (rpc("zenlisp-plugin::manifest", []), t),
+            ReloadPlugins => (rpc("zenlisp-plugin::reload-plugins", []), t),
+            RunPluginCommand { id, file, text, cursor, selection_from, selection_to, package } => (
+                rpc(
+                    "zenlisp-plugin::run-command",
+                    [
+                        s(id),
+                        file.as_deref().map(s).unwrap_or(Sexp::Nil),
+                        s(text),
+                        Sexp::Int(*cursor),
+                        Sexp::Int(*selection_from),
+                        Sexp::Int(*selection_to),
+                        s(package),
+                    ],
+                ),
+                t,
+            ),
+            RunPluginHook { event, args } => (rpc("zenlisp-plugin::run-editor-hook", std::iter::once(s(event)).chain(args.iter().map(|a| s(a)))), t),
+            SetPluginSetting { id, value } => (rpc("zenlisp-plugin::set-setting", [s(id), json_sexp(value)]), t),
+            CheckText { text, file, .. } => (rpc("zenlisp::check-text", [s(text), file.as_deref().map(s).unwrap_or(Sexp::Nil)]), t),
             RerunTests { tests } => (
                 rpc(
                     "zenlisp:rerun-tests",
