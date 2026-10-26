@@ -13,9 +13,10 @@ adds a command with a key, a setting, a save hook and a REPL command" cover it.
 
 ## Where plugins live
 
-Plugins are global: one folder, `plugins/` in ZenLisp's data folder
-(`~/Library/Application Support/ZenLisp/plugins/`), loaded into every
-project's Lisp. Settings ▸ Plugins opens the folder and reloads it. In it:
+Plugins are global: one folder, `~/.config/zenlisp/plugins/` (under
+`$XDG_CONFIG_HOME` when it is set), loaded into every project's Lisp. Plugins
+in the old place, `~/Library/Application Support/ZenLisp/plugins/`, move there
+the first time ZenLisp starts a Lisp. Settings ▸ Plugins opens the folder and reloads it. In it:
 
 - `name.lisp` is the plugin `name`.
 - `name/init.lisp` is the plugin `name`, for a plugin of several files.

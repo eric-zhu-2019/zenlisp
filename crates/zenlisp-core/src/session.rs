@@ -19,6 +19,8 @@ pub struct SessionConfig {
     pub cwd: PathBuf,
     pub cache_dir: PathBuf,
     pub data_dir: PathBuf,
+    /// Where the user's own configuration lives: `plugins/` in it.
+    pub config_dir: PathBuf,
     /// Off by default: a user ~/.sbclrc can rebind *debugger-hook* or load
     /// systems that break Swank, and the IDE must still start.
     pub load_userinit: bool,
@@ -76,6 +78,7 @@ impl SessionConfig {
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
             cache_dir: default_cache_dir(),
             data_dir: default_data_dir(),
+            config_dir: default_config_dir(),
             load_userinit: false,
             dynamic_space_mb: None,
             debug_code: true,
@@ -90,6 +93,27 @@ fn default_data_dir() -> PathBuf {
     }
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     home.join("Library/Application Support/ZenLisp")
+}
+
+/// `$ZENLISP_CONFIG_DIR`, else `zenlisp` in `$XDG_CONFIG_HOME` or `~/.config`.
+fn default_config_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ZENLISP_CONFIG_DIR") {
+        return PathBuf::from(dir);
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".config")).join("zenlisp")
+}
+
+/// The plugins folder. Plugins once lived in the data folder, and move here
+/// the first time, so a user's plugins and their settings carry over.
+fn plugins_dir(cfg: &SessionConfig) -> PathBuf {
+    let dir = cfg.config_dir.join("plugins");
+    let old = cfg.data_dir.join("plugins");
+    if !dir.exists() && old.is_dir() {
+        let _ = std::fs::create_dir_all(&cfg.config_dir);
+        let _ = std::fs::rename(&old, &dir);
+    }
+    dir
 }
 
 fn default_cache_dir() -> PathBuf {
@@ -161,7 +185,7 @@ impl Session {
             .arg(format!(
                 "(zenlisp:start-server :debug-code {} :plugins {})",
                 if cfg.debug_code { "t" } else { "nil" },
-                Sexp::Str(format!("{}/", cfg.data_dir.join("plugins").display()))
+                Sexp::Str(format!("{}/", plugins_dir(cfg).display()))
             ))
             .current_dir(&cfg.cwd)
             .stdin(Stdio::piped())

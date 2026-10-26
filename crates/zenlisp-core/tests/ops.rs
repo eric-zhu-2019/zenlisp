@@ -356,7 +356,9 @@ async fn names_being_typed_are_packages_or_systems_where_the_code_says_so() {
 #[tokio::test]
 async fn plugins_add_commands_settings_checks_and_repl_hooks() {
     let data = std::env::temp_dir().join(format!("zenlisp-plugins-{}", std::process::id()));
+    // Plugins start in the data folder, where they once lived, and move to the config folder.
     let plugins = data.join("plugins");
+    let config = data.join("config");
     std::fs::create_dir_all(&plugins).unwrap();
     let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/plugins");
     for f in ["demo.lisp", "broken.lisp"] {
@@ -364,6 +366,7 @@ async fn plugins_add_commands_settings_checks_and_repl_hooks() {
     }
     let mut cfg = SessionConfig::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../resources"));
     cfg.data_dir = data.clone();
+    cfg.config_dir = config.clone();
     let s = Session::start(&cfg).await.expect("sbcl starts");
     let c = &s.conn;
     let json = |r: Reply| match r {
@@ -372,6 +375,8 @@ async fn plugins_add_commands_settings_checks_and_repl_hooks() {
     };
 
     let m = json(Op::PluginManifest.run(c).await.unwrap());
+    assert_eq!(m["directory"], format!("{}/", config.join("plugins").display()), "plugins load from the config folder");
+    assert!(config.join("plugins/demo.lisp").exists() && !plugins.exists(), "and the old folder moved there");
     let broken = m["plugins"].as_array().unwrap().iter().find(|p| p["name"] == "broken").unwrap();
     assert!(broken["error"].as_str().unwrap().contains("boom"), "a plugin that fails says why: {m}");
     assert_eq!(m["commands"][0]["id"], "demo/wrap-form", "the other plugins still load");
