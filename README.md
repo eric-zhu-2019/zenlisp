@@ -22,9 +22,9 @@ SBCL, and fixes come with tests.
 
 ### Skills and agents involved
 
-Claude Code ran with the pstack plugin's
-`/pstack:poteto-mode`, which sets how it plans, builds and verifies work. These
-are the skills it loaded while building ZenLisp:
+Claude Code ran with the pstack plugin's `/pstack:poteto-mode`, which sets how
+it plans, builds and verifies work. It loaded these skills while building
+ZenLisp:
 
 | Skill | What it was used for |
 | --- | --- |
@@ -37,7 +37,8 @@ are the skills it loaded while building ZenLisp:
 | `claude-api` | The built-in assistant's Anthropic API client, model and streaming |
 | Principles | `prove-it-works`, `foundational-thinking`, `model-the-domain`, `experience-first`, `exhaust-the-design-space`, `sequence-verifiable-units`, `laziness-protocol`, `build-the-lever`, `boundary-discipline`, `test-behavior-not-implementation`, `never-block-on-the-human` |
 
-Subagents took on separate pieces. The coding agents each worked in their own git worktree:
+Subagents took on separate pieces. Each coding agent worked in its own git
+worktree:
 
 | Agent | Work |
 | --- | --- |
@@ -48,15 +49,15 @@ Subagents took on separate pieces. The coding agents each worked in their own gi
 
 ## What it does
 
-- **REPL and inspector.** Results are live objects: click one to use it in the
-  next input, ⌘-click to inspect it. ⌃R searches earlier input. Extra REPLs run
+- **REPL and inspector.** Results are live objects. Click one to use it in the
+  next input, or ⌘-click it to inspect it. ⌃R searches earlier input. Extra REPLs run
   in their own threads.
 - **Debugger.** Restarts, backtrace, frame locals, restart a frame, form
   breakpoints and stepping.
 - **Checking as you type.** Each file is compiled in the background, without
   loading it, and warnings mark the exact symbol. Saving compiles only the
-  top-level forms that changed into the running Lisp, and so does a change to
-  a loaded file from git or another editor.
+  top-level forms that changed into the running Lisp. A loaded file changed by
+  git or another editor is compiled the same way.
 - **Navigation.** `gd` goes to local bindings first, then to Lisp's own record
   of a definition, then to definitions in code not loaded yet. ⌃O goes back.
 - **Tools.** Trace and Profile panels, macroexpansion in place, disassembly,
@@ -67,12 +68,13 @@ Subagents took on separate pieces. The coding agents each worked in their own gi
   dependencies, a dependency editor, and startup images.
 - **Editor.** Vim keys, SLIME's Emacs sequences, parinfer, structural editing,
   split panes, a git gutter with inline diffs, word wrap (⌥Z), Markdown preview
-  (⇧⌘V), a choice of editor and interface fonts, and themes. Solarized,
-  Nord and Gruvbox come built in, picked separately for light and dark, and
-  your own are JSON files in the themes folder that Settings opens. `K` shows a symbol's
-  documentation in a popup, and completion offers package and system names
-  where code names them, such as `(:use #:alexan`. ⌃N and ⌃P move through the
-  completion list.
+  (⇧⌘V), and a choice of editor and interface fonts.
+- **Completion.** Completion offers package and system names where code names
+  them, such as `(:use #:alexan`. ⌃N and ⌃P move through the list. `K` shows a
+  symbol's documentation in a popup.
+- **Themes.** Solarized, Nord and Gruvbox come built in, picked separately for
+  light and dark. Your own themes are JSON files in the themes folder, which
+  Settings opens.
 - **Plugins.** Lisp files in the plugins folder add commands with keys,
   checks, settings, and hooks on saving, loading, tests, the debugger and the
   REPL. See [docs/plugins.md](docs/plugins.md).
@@ -108,10 +110,12 @@ files change.
 Open a folder with **Open Project…** (⌘O), or create one with **New Project**
 (⇧⌘N). Both are in the File menu, with Open Recent and Close Project, and in the
 menu under the project's name in the title bar. Leaving a project with unsaved
-files asks to save them first. A new
-project has an ASDF system, a test system, and an executable build target. It
-takes its dependencies from Quicklisp, or from ocicl with each version pinned in
-`ocicl.csv`; ocicl needs `brew install ocicl` and `ocicl setup` once.
+files asks to save them first.
+
+A new project has an ASDF system, a test system, and an executable build
+target. It takes its dependencies from Quicklisp, or from ocicl with each
+version pinned in `ocicl.csv`. To use ocicl, run `brew install ocicl` and
+`ocicl setup` once.
 
 ZenLisp finds the dependency manager from the files in the project root:
 
@@ -130,25 +134,31 @@ ocicl pins a dependency to any version the registry offers.
 qlot and ocicl replace the global Quicklisp, so a project with a `qlfile` or
 `ocicl.csv` does not load it.
 
-The **Systems** sidebar lists every system in the project's `.asd` files.
-**Run** loads a system and calls its `:entry-point` in the REPL, as its built
-program would start. **Load** loads a system and fetches its dependencies. **Test** runs
-`asdf:test-system`. **Build** runs `asdf:make` in a separate SBCL and streams
-the output to the **Output** panel.
+The **Systems** sidebar lists every system in the project's `.asd` files. Each
+has four buttons:
+
+- **Run** loads the system and calls its `:entry-point` in the REPL, the way
+  its built program would start.
+- **Load** loads the system and fetches its dependencies.
+- **Test** runs `asdf:test-system`.
+- **Build** runs `asdf:make` in a separate SBCL and streams the output to the
+  **Output** panel.
 
 ## Use Claude or OpenAI
 
-Open the assistant with ⌘L. It answers with Claude or with OpenAI, and the
-model menu under the chat switches between them, even mid-conversation.
-Settings ▸ Assistant picks each provider's model, `claude-opus-5-5` and
-`gpt-6.1-sol` by default, or any other model name.
+Open the assistant with ⌘L. It answers with Claude or with OpenAI. The model
+menu under the chat switches between them, even mid-conversation. Settings ▸
+Assistant sets the model for each provider. The defaults are `claude-opus-5-5`
+and `gpt-6.1-sol`, and you can type any other model name. **Stop** ends a reply
+and any Lisp code the assistant was running for it.
 
 Each provider needs an API key, which you can paste in the assistant. For
 Claude, ZenLisp also uses `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or an
-`ant auth login` profile. For OpenAI, it uses `OPENAI_API_KEY`, and
-`OPENAI_BASE_URL` points it at another server with the Responses API. Both use
-the same tools as the MCP server below. Code proposed in a reply has
-**Insert** and **Eval** buttons.
+`ant auth login` profile. For OpenAI, it uses `OPENAI_API_KEY`. Set
+`OPENAI_BASE_URL` to use another server that offers the Responses API.
+
+Both providers use the same tools as the MCP server below. Code proposed in a
+reply has **Insert** and **Eval** buttons.
 
 To let Claude Code work in your image, copy the command from the assistant
 settings and run it in a terminal. It looks like this:
@@ -165,9 +175,8 @@ The tools are `eval`, `compile_form`, `describe_symbol`, `apropos`,
 `project_info`, `load_system`, `run_tests`, `debugger_state`,
 `invoke_restart`, `read_file`, `edit_file`, and `list_files`.
 
-Every warning and error mark has an **Ask AI to fix** button, in the hover
-box, in the box that opens when the cursor reaches a mark, and in the lint
-panel. It sends SBCL's message, the file, the line and the code to the
+Every warning and error mark has an **Ask AI to fix** button. It shows in the
+hover box and in the box that opens when the cursor reaches a mark. It sends SBCL's message, the file, the line and the code to the
 assistant, which finds the cause and changes the file with `edit_file`. The
 change shows in the editor at once, and one undo takes it back.
 
@@ -189,12 +198,20 @@ ones you use most:
 | Search in project | ⇧⌘F | |
 | Command palette | ⇧⌘P | |
 
-SLIME's Emacs sequences work too, in any Vim mode: `C-x C-e` evaluates the
-form before the cursor, `C-M-x` the top-level form, `C-c C-c` compiles it,
-`C-c C-k` compiles and loads the file, `M-.` and `M-,` jump to a definition
-and back, and `C-c C-z` switches to the REPL. ⌘J goes to the REPL, and from the
-REPL back to the editor. The status bar shows a prefix
-while you type it, and `C-g` cancels.
+SLIME's Emacs sequences work too, in any Vim mode:
+
+| Sequence | Action |
+| --- | --- |
+| `C-x C-e` | Evaluate the form before the cursor |
+| `C-M-x` | Evaluate the top-level form |
+| `C-c C-c` | Compile the top-level form |
+| `C-c C-k` | Compile and load the file |
+| `M-.`, `M-,` | Go to a definition, and back |
+| `C-c C-z` | Switch to the REPL |
+
+The status bar shows a prefix such as `C-c` while you type it, and `C-g`
+cancels it. ⌘J goes to the REPL, and from the REPL back to the editor.
+Plugin commands list their keys in the same ⇧⌘/ screen.
 
 Hover a symbol to see its documentation, or its argument list when it has
 none. Turn off Vim keys, Emacs sequences, parinfer or checking as you type in
@@ -211,12 +228,13 @@ form, so `daf` and `cif` work as you would expect.
 The file tree creates, renames, and moves files to the Trash. When another
 program changes an open file, ZenLisp reloads it if you have no unsaved
 edits, and asks otherwise. It also asks before closing a file or quitting
-with unsaved changes. Files outside the project, such as SBCL's sources that
-go to definition opens, are read-only and marked with a lock.
+with unsaved changes. Files outside the project, such as SBCL's own sources opened by go to
+definition, are read-only and marked with a lock.
 
 **Search** in the sidebar finds and replaces across the project, with the
 same `.gitignore` rules as ripgrep. The **Problems** panel lists compiler
-notes from every file.
+notes from every file. The trash button in the bottom panel clears whichever
+tab is showing.
 
 ## Architecture
 
@@ -257,15 +275,19 @@ flowchart TB
   dev -.-> wb
 ```
 
-The UI never talks to Lisp itself. It sends typed requests to the Workbench
-in Rust and renders the events that come back; `src/protocol` holds the
-TypeScript types generated from the Rust ones. The Workbench owns one SBCL
-process and speaks Swank to it, the protocol SLIME uses. ZenLisp's own Lisp
-code in `resources/lisp` loads into that image beside Swank, and so do your
-project and your plugins. The assistant and outside agents reach the image
-through the same tools, so what they evaluate is what you see in the REPL. In
-development, `zenlisp-dev` serves the same Workbench over a WebSocket, so the
-UI runs in a browser and the end-to-end tests drive it there.
+The UI never talks to Lisp directly. It sends typed requests to the Workbench
+in Rust and renders the events that come back. The TypeScript types for both
+are generated from the Rust ones into `src/protocol`.
+
+The Workbench owns one SBCL process and talks to it over Swank, the protocol
+SLIME uses. ZenLisp's own Lisp code in `resources/lisp` loads into that image
+beside Swank, and so do your project and your plugins.
+
+The assistant and outside agents reach the image through the same tools, so
+what they evaluate is what you see in the REPL. In development, `zenlisp-dev`
+serves the same Workbench over a WebSocket. That lets the UI run in a browser,
+where the end-to-end tests drive it. [How ZenLisp is built](docs/architecture.md)
+explains why it is designed this way.
 
 ## Develop
 
@@ -284,10 +306,11 @@ Set `ZENLISP_TRACE=1` to log every Swank message.
 
 ## Release
 
-`scripts/release.sh` builds `ZenLisp.app` and its disk image signed with a
-Developer ID, and checks the signatures. The app carries the installed SBCL
-(`scripts/bundle-sbcl.sh`), signed with the hardened runtime and the
-entitlements SBCL needs to compile code, so it runs on Macs without SBCL.
+`scripts/release.sh` builds `ZenLisp.app` and its disk image, signs both with
+a Developer ID, and checks the signatures. The app carries a copy of the
+installed SBCL (`scripts/bundle-sbcl.sh`), so it runs on Macs without SBCL. That
+copy is signed with the hardened runtime and the entitlements SBCL needs to
+compile code.
 
 ```sh
 security find-identity -v -p codesigning            # pick a Developer ID Application identity
@@ -316,8 +339,8 @@ ZENLISP_UPDATE_PUBKEY="$(cat zenlisp.key.pub)" TAURI_SIGNING_PRIVATE_KEY="$(cat 
 ZENLISP_SIGN_IDENTITY="…" scripts/release.sh
 ```
 
-It writes `latest.json` beside the archive; publish both at those URLs. A
-build without these variables has updates off and says so.
+The script writes `latest.json` beside the archive. Publish both at those
+URLs. A build without these variables has updates turned off and says so.
 
 ## Learn more
 
@@ -327,7 +350,7 @@ from TurboLisp and WhateverCLIM.
 
 ## License
 
-ZenLisp is MIT licensed, see [LICENSE](LICENSE). It includes Swank from
+ZenLisp is MIT licensed. See [LICENSE](LICENSE). It includes Swank from
 [SLIME](https://github.com/slime/slime) in `resources/swank`, which is in the
 public domain, and the parinfer engine from
 [parinfer-rust](https://github.com/eraserhd/parinfer-rust) in
