@@ -30,7 +30,10 @@ jobs:
         run: |
           brew install sbcl
           curl -fsSLO https://beta.quicklisp.org/quicklisp.lisp
-          sbcl --non-interactive --load quicklisp.lisp --eval '(quicklisp-quickstart:install)'
+          # Tests load Quicklisp in parallel, and its first use compiles and downloads
+          # into one shared folder, so that happens once here.
+          sbcl --non-interactive --load quicklisp.lisp --eval '(quicklisp-quickstart:install)' \
+            --eval '(ql:quickload (list "alexandria" "fiveam" "parachute" "split-sequence"))'
       - run: npm ci
       - run: npx playwright install webkit
       - run: scripts/verify.sh
