@@ -15,7 +15,7 @@ import { type State, type TranscriptItem, set, useStore } from "../store";
 import { Icon } from "./Icon";
 import { layout, promptText, replBuffer, runInput, searchHistory, setInput, TranscriptRenderer } from "./replBuffer";
 
-const HISTORY = "zenlisp.replHistory";
+const HISTORY = "zparen.replHistory";
 
 /** Inputs run in any REPL, oldest first, shared by every REPL and kept across launches. */
 const past: string[] = (() => {

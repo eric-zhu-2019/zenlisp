@@ -1,0 +1,12 @@
+[package]
+name = "zparen-dev"
+version = "0.1.0"
+edition = "2024"
+description = "Serves the ZParen backend over WebSocket so the UI runs in a browser for end-to-end tests."
+
+[dependencies]
+zparen-core = { path = "../zparen-core" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+axum = { version = "0.8", features = ["ws"] }

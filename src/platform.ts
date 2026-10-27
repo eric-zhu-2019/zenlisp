@@ -25,7 +25,7 @@ export async function openExternal(url: string) {
   } else window.open(url, "_blank");
 }
 
-const RECENT = "zenlisp.recent";
+const RECENT = "zparen.recent";
 
 export function recentProjects(): string[] {
   try {
@@ -66,7 +66,7 @@ export async function revealInFinder(path: string) {
   }
 }
 
-const LOADED = "zenlisp.loaded";
+const LOADED = "zparen.loaded";
 
 /** The systems loaded in a project's last session, which its next session loads again. */
 export function loadedSystems(root: string): string[] {

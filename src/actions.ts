@@ -79,7 +79,7 @@ export async function syncBreakpoints(path: string) {
     return lispString(text.length > 48 ? `${text.slice(0, 47)}…` : text);
   };
   const ranges = list.map((b) => `(${b.from} ${b.to} ${label(b)})`).join(" ");
-  const r = await lisp({ op: "eval", form: `(zenlisp::set-breakpoints ${lispString(path)} '(${ranges}))`, package: "COMMON-LISP-USER" }).catch(() => null);
+  const r = await lisp({ op: "eval", form: `(zparen::set-breakpoints ${lispString(path)} '(${ranges}))`, package: "COMMON-LISP-USER" }).catch(() => null);
   const bound = r?.kind === "evaluated" ? (r.value.match(/\d+/g) ?? []).map(Number) : [];
   set((s) => ({ boundBreakpoints: { ...s.boundBreakpoints, [path]: bound } }));
 }
@@ -319,7 +319,7 @@ function runTask(task: string, req: Request) {
 export function runSystem(system: SystemInfo) {
   if (!system.entryPoint) return;
   set({ bottom: "repl" });
-  replEval(`(progn (zenlisp:load-system ${lispString(system.name)}) (uiop:call-function ${lispString(system.entryPoint)}))`);
+  replEval(`(progn (zparen:load-system ${lispString(system.name)}) (uiop:call-function ${lispString(system.entryPoint)}))`);
 }
 
 export const loadSystem = (name: string) => runTask(`load ${name}`, { type: "loadSystem", name });
@@ -415,7 +415,7 @@ export async function addDependency(system: SystemInfo, dep: string) {
   if (text === null) return;
   const next = addDep(text, system.name, dep);
   if (next === null) {
-    appendTranscript({ kind: "notice", tone: "error", text: `${baseName(system.file)} does not define ${system.name} in a form ZenLisp can edit.` });
+    appendTranscript({ kind: "notice", tone: "error", text: `${baseName(system.file)} does not define ${system.name} in a form ZParen can edit.` });
     return;
   }
   if (next !== text) await writeText(system.file, next);
@@ -423,7 +423,7 @@ export async function addDependency(system: SystemInfo, dep: string) {
     set({ bottom: "output" });
     await runTask(`fetch ${dep}`, { type: "fetchSystem", name: dep });
   } else {
-    await lispTask(`fetch ${dep}`, `(progn (zenlisp:load-system ${lispString(dep)}) t)`);
+    await lispTask(`fetch ${dep}`, `(progn (zparen:load-system ${lispString(dep)}) t)`);
   }
   await refreshSystems();
 }
@@ -791,7 +791,7 @@ async function recordLoadedFiles() {
   if (!root || get().status.session.state !== "ready") return;
   // Which systems are loaded changes too, and a changed .asd of a loaded one asks for a load.
   void refreshSystems();
-  const r = await backend.request({ type: "lisp", op: { op: "eval", form: `(zenlisp::loaded-source-files ${lispString(root)})`, package: "COMMON-LISP-USER" } }).catch(() => null);
+  const r = await backend.request({ type: "lisp", op: { op: "eval", form: `(zparen::loaded-source-files ${lispString(root)})`, package: "COMMON-LISP-USER" } }).catch(() => null);
   if (r?.type !== "lisp" || r.reply.kind !== "evaluated") return;
   // The value is a printed Lisp string: quoted, with " and \ escaped and newlines as they are.
   const listed = r.reply.value.replace(/^"|"$/g, "").replace(/\\(.)/g, "$1").split("\n").filter(Boolean);
@@ -803,7 +803,7 @@ async function recordLoadedFiles() {
 }
 
 /**
- * Compiles what changed in loaded files that something other than ZenLisp
+ * Compiles what changed in loaded files that something other than ZParen
  * wrote, such as git or another editor. A file with unsaved edits is left to
  * the conflict it raises; a changed .asd needs a load to take effect.
  */
@@ -1179,7 +1179,7 @@ export async function copyDiagnostics() {
     .slice(-20)
     .map((t) => (t.kind === "condition" ? `${t.type}: ${t.condition}` : t.kind === "notice" ? t.text : ""));
   const text = [
-    "ZenLisp diagnostics",
+    "ZParen diagnostics",
     `Lisp: ${session.state === "ready" ? `SBCL ${session.version}` : session.state === "failed" ? `failed to start: ${session.message}` : session.state === "exited" ? `exited: ${session.message}` : session.state}`,
     `Project: ${s.status.project ? `${s.status.project.name} (${s.status.project.managers.map((m) => m.kind).join(", ") || "no dependency manager"})` : "none"}`,
     `System: ${navigator.userAgent}`,

@@ -1,6 +1,6 @@
 # Plugins
 
-ZenLisp users write Common Lisp, so they extend ZenLisp in Common Lisp, the
+ZParen users write Common Lisp, so they extend ZParen in Common Lisp, the
 way Emacs users extend Emacs in Elisp. A plugin is Lisp code that every
 project's SBCL loads when it starts. With a small API it adds commands with
 keys, checks, settings and hooks. The editor learns what plugins add over
@@ -8,15 +8,15 @@ Swank, the channel every other Lisp feature uses, so a plugin needs no
 TypeScript, no Rust and no rebuild of the app.
 
 The code is in `resources/lisp/plugins.lisp` (Lisp) and `src/plugins.ts`
-(editor). `crates/zenlisp-core/tests/ops.rs` and the end-to-end test "a plugin
+(editor). `crates/zparen-core/tests/ops.rs` and the end-to-end test "a plugin
 adds a command with a key, a setting, a save hook and a REPL command" cover it.
 
 ## Where plugins live
 
-Plugins are global: one folder, `~/.config/zenlisp/plugins/` (under
+Plugins are global: one folder, `~/.config/zparen/plugins/` (under
 `$XDG_CONFIG_HOME` when it is set), loaded into every project's Lisp. Plugins
-in the old place, `~/Library/Application Support/ZenLisp/plugins/`, move there
-the first time ZenLisp starts a Lisp. Settings ▸ Plugins opens the folder and reloads it. In it:
+in the old place, `~/Library/Application Support/ZParen/plugins/`, move there
+the first time ZParen starts a Lisp. Settings ▸ Plugins opens the folder and reloads it. In it:
 
 - `name.lisp` is the plugin `name`.
 - `name/init.lisp` is the plugin `name`, for a plugin of several files.
@@ -30,12 +30,12 @@ everything the plugins defined.
 
 ## Writing one
 
-The package is `zenlisp-plugin`. A plugin gives it a local nickname.
+The package is `zparen-plugin`. A plugin gives it a local nickname.
 
 ```lisp
 (defpackage #:my-tools
   (:use #:cl)
-  (:local-nicknames (#:zp #:zenlisp-plugin)))
+  (:local-nicknames (#:zp #:zparen-plugin)))
 (in-package #:my-tools)
 
 (zp:define-setting wrap-with :type :choice :choices ("time" "progn") :default "time")
@@ -131,27 +131,27 @@ The REPL hooks run for the main REPL and for extra REPLs.
 Every call into a plugin runs inside a handler, so its errors never open the
 debugger. That matters because a thread stopped in the debugger can hold the
 image lock that checks and compiles wait for (see `*image-lock*` in
-`zenlisp.lisp`). An error becomes a message naming the plugin. For a command
+`zparen.lisp`). An error becomes a message naming the plugin. For a command
 or an editor hook, it shows as a flash and in the REPL. For a hook that runs
 inside Lisp, it shows in the REPL, and for a check, as a note.
 
 ## How the editor and Lisp talk
 
-1. When a session is ready, the editor calls `zenlisp-plugin::manifest`. It
+1. When a session is ready, the editor calls `zparen-plugin::manifest`. It
    returns JSON with the plugins and their errors, the commands, the settings
    and the events that have hooks.
-2. A command runs through `zenlisp-plugin::run-command` with the editor's
+2. A command runs through `zparen-plugin::run-command` with the editor's
    state, and answers with the effects and errors.
 3. The editor runs `:before-save` and `:after-save` through
-   `zenlisp-plugin::run-editor-hook`, only when a plugin hooks them. Every
-   other event happens in Lisp, which wraps the Swank and ZenLisp functions
+   `zparen-plugin::run-editor-hook`, only when a plugin hooks them. Every
+   other event happens in Lisp, which wraps the Swank and ZParen functions
    involved with `sb-int:encapsulate`.
-4. Checks run inside `zenlisp::check-text`, through `*check-functions*`.
+4. Checks run inside `zparen::check-text`, through `*check-functions*`.
 5. Changing a setting or reloading answers with a new manifest.
 
 ## Why Lisp, not JavaScript
 
-VS Code and Zed take plugins in JavaScript or WebAssembly. ZenLisp doesn't,
+VS Code and Zed take plugins in JavaScript or WebAssembly. ZParen doesn't,
 for three reasons:
 - **Its users write Lisp.** A Lisp plugin can call the project's own code
   and the image's state directly.

@@ -1,6 +1,6 @@
 // The name being typed when it could name a package or an ASDF system: a
 // keyword, an uninterned symbol or a string. Whether it does is Lisp's call
-// (`zenlisp::designator-at`), from the form around it.
+// (`zparen::designator-at`), from the form around it.
 
 import { formAtOrBefore, isSymbolChar } from "./forms";
 

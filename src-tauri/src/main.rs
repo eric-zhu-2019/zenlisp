@@ -1,3 +1,3 @@
 fn main() {
-    zenlisp_lib::run()
+    zparen_lib::run()
 }

@@ -2,7 +2,7 @@
 ;;;; A breakpoint covers a form and stops before the first call compiled from
 ;;;; inside it, through an sb-di breakpoint on that call site.
 
-(in-package #:zenlisp)
+(in-package #:zparen)
 
 (define-condition breakpoint-hit (simple-condition) ()
   (:documentation "Not an error, so handlers in user code never see a breakpoint."))
@@ -10,7 +10,7 @@
 (defvar *breakpoints* (make-hash-table :test 'equal)
   "File path to the sb-di breakpoints installed for it.")
 
-(defvar *breakpoint-lock* (sb-thread:make-mutex :name "zenlisp breakpoints"))
+(defvar *breakpoint-lock* (sb-thread:make-mutex :name "zparen breakpoints"))
 
 ;; The debugger shows a breakpoint's frame source the way it shows a step's.
 (let ((extras (fdefinition 'swank/backend:condition-extras)))

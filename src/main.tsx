@@ -1,3 +1,4 @@
+import "./renamed";
 import React from "react";
 import { fetchManifest, usePlugins } from "./plugins";
 import ReactDOM from "react-dom/client";
@@ -48,7 +49,7 @@ backend.onEvent((e) => {
   if (e.type === "lisp" && e.event.kind === "debug" && !e.event.stepping) markTour("debug");
 });
 
-// Commits and checkouts happen outside ZenLisp, and .git is not watched.
+// Commits and checkouts happen outside ZParen, and .git is not watched.
 window.addEventListener("focus", () => void refreshGit());
 
 const MENU: Record<string, () => void> = {
@@ -68,7 +69,7 @@ type UpdateNews = { kind: "available" | "current" | "unconfigured" | "error"; ve
 function announceUpdate(n: UpdateNews) {
   const ok = [{ label: "OK", kind: "primary" as const, run: () => {} }];
   if (n.kind === "available") {
-    ask(`ZenLisp ${n.version} is available`, n.notes || "Install it now? ZenLisp restarts into the new version; save your work first.", [
+    ask(`ZParen ${n.version} is available`, n.notes || "Install it now? ZParen restarts into the new version; save your work first.", [
       {
         label: "Install and Restart",
         kind: "primary",
@@ -79,7 +80,7 @@ function announceUpdate(n: UpdateNews) {
       },
       { label: "Later", run: () => {} },
     ]);
-  } else if (n.kind === "current") ask("ZenLisp is up to date", `${n.version} is the latest release.`, ok);
+  } else if (n.kind === "current") ask("ZParen is up to date", `${n.version} is the latest release.`, ok);
   else if (n.kind === "unconfigured") ask("Updates are off in this build", "It was built without an update source, so it cannot look for new releases.", ok);
   else ask("Could not check for updates", n.notes, ok);
 }

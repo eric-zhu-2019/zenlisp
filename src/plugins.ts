@@ -1,4 +1,4 @@
-// Plugins: Lisp code from ZenLisp's plugins folder (resources/lisp/plugins.lisp).
+// Plugins: Lisp code from ZParen's plugins folder (resources/lisp/plugins.lisp).
 // The manifest says what they add; commands and editor hooks answer with
 // effects, edits and messages that this module applies.
 

@@ -26,7 +26,7 @@ function socketBackend(url: string): Backend {
   const ready = new Promise<WebSocket>((resolve, reject) => {
     const ws = new WebSocket(url);
     ws.onopen = () => resolve(ws);
-    ws.onerror = () => reject(new Error(`cannot reach ${url}. Run: cargo run -p zenlisp-dev`));
+    ws.onerror = () => reject(new Error(`cannot reach ${url}. Run: cargo run -p zparen-dev`));
     ws.onmessage = (m) => {
       const msg = JSON.parse(m.data);
       if (msg.event) listeners.forEach((l) => l(msg.event));

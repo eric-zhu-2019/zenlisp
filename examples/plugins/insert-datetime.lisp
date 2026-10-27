@@ -1,10 +1,10 @@
 ;;;; insert-datetime.lisp: C-c t inserts the current date and time at the cursor.
-;;;; Copy this file into ZenLisp's plugins folder (Settings ▸ Plugins ▸ Open
+;;;; Copy this file into ZParen's plugins folder (Settings ▸ Plugins ▸ Open
 ;;;; Plugins Folder), then click Reload Plugins.
 
 (defpackage #:insert-datetime
   (:use #:cl)
-  (:local-nicknames (#:zp #:zenlisp-plugin)))
+  (:local-nicknames (#:zp #:zparen-plugin)))
 (in-package #:insert-datetime)
 
 (zp:define-setting style :type :choice :choices ("date and time" "date") :default "date and time"

@@ -14,7 +14,7 @@ export const TOUR = [
 
 export type TourStep = (typeof TOUR)[number]["id"];
 
-const KEY = "zenlisp.tour";
+const KEY = "zparen.tour";
 
 type Saved = { done: TourStep[]; dismissed: boolean };
 

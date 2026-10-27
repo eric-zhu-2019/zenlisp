@@ -1,4 +1,4 @@
-# What ZenLisp borrows from TurboLisp
+# What ZParen borrows from TurboLisp
 
 TurboLisp ships WhateverCLIM's Listener, Inspector, Debugger and Zeta editor
 as a native Mac app. We read both projects for
@@ -26,6 +26,6 @@ Ranked ideas to borrow:
     badge.
 11. Saved-image startup. A prebuilt SBCL core starts in milliseconds.
 
-Gaps in WhateverCLIM that ZenLisp fills: compiler-note annotations, xref and
+Gaps in WhateverCLIM that ZParen fills: compiler-note annotations, xref and
 jump to definition, apropos, ASDF and package-manager project management,
 Restart Frame.

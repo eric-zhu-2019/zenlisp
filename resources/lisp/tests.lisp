@@ -6,7 +6,7 @@
 ;;;; usually load during that test-op, so the wrappers go on after each system
 ;;;; loads as well as before the run.
 
-(in-package #:zenlisp)
+(in-package #:zparen)
 
 (defvar *recording* nil
   "While tests run, the (FRAMEWORK . RESULT) captures made so far, newest first,
@@ -21,8 +21,8 @@ ending in :RECORDING so that it is true before the first capture.")
 (defun wrap (symbol capture &key outermost)
   "Wraps the function named SYMBOL so a run calls CAPTURE with its values.
 With OUTERMOST, calls made inside another such call are not captured."
-  (when (and symbol (fboundp symbol) (not (sb-int:encapsulated-p symbol 'zenlisp-tests)))
-    (sb-int:encapsulate symbol 'zenlisp-tests
+  (when (and symbol (fboundp symbol) (not (sb-int:encapsulated-p symbol 'zparen-tests)))
+    (sb-int:encapsulate symbol 'zparen-tests
                         (lambda (f &rest args)
                           (let* ((nested (and outermost *inside*))
                                  (values (let ((*inside* (or *inside* outermost)))

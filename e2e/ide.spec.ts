@@ -21,7 +21,7 @@ async function fresh(page: Page) {
   }
   await expect(welcome).toBeVisible();
   // The getting-started list would cover controls the tests click; one test opens it on purpose.
-  await page.evaluate(() => localStorage.setItem("zenlisp.tour", JSON.stringify({ done: [], dismissed: true })));
+  await page.evaluate(() => localStorage.setItem("zparen.tour", JSON.stringify({ done: [], dismissed: true })));
 }
 
 async function replEval(page: Page, form: string) {
@@ -39,7 +39,7 @@ const replInputText = (page: Page) =>
   });
 
 test("new project, evaluate, debug and inspect", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await shots(page, "01-welcome");
 
@@ -213,7 +213,7 @@ test("new project, evaluate, debug and inspect", async ({ page }) => {
 });
 
 test("assistant runs tools in the live image and its code can be inserted", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-chat");
@@ -239,7 +239,7 @@ test("assistant runs tools in the live image and its code can be inserted", asyn
   await expect(page.locator(".repl-buffer .presentation", { hasText: "ANSWER" })).toBeVisible();
 
   await page.getByTitle("Assistant settings").click();
-  await expect(page.locator(".chat-mcp pre")).toContainText("claude mcp add --transport http zenlisp");
+  await expect(page.locator(".chat-mcp pre")).toContainText("claude mcp add --transport http zparen");
   await page.getByTitle("Assistant settings").click();
 
   const model = page.getByRole("combobox", { name: "Model" });
@@ -285,7 +285,7 @@ test("assistant runs tools in the live image and its code can be inserted", asyn
 });
 
 test("Stop ends the assistant's turn, and the Lisp work its tools started", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-stop");
@@ -325,7 +325,7 @@ test("Stop ends the assistant's turn, and the Lisp work its tools started", asyn
 });
 
 test("vim editing with parinfer, completion, arglists, notes and definitions", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-edit");
@@ -483,7 +483,7 @@ test("vim editing with parinfer, completion, arglists, notes and definitions", a
 });
 
 test("file tree creates and renames files, guards unsaved work and follows the disk", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-files");
@@ -532,7 +532,7 @@ test("file tree creates and renames files, guards unsaved work and follows the d
 });
 
 test("search, replace, outline, back and forward, and the problems panel", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-nav");
@@ -579,7 +579,7 @@ test("search, replace, outline, back and forward, and the problems panel", async
   await expect(problems).toContainText("undefined variable");
   expect(existsSync(join(root, "src/oops.fasl")), "compiling a file leaves no fasl beside it").toBe(false);
   expect(
-    execFileSync("find", [join(homedir(), "Library/Caches/ZenLisp/fasl"), "-path", `*${realpathSync(root)}/src/oops.fasl`]).toString(),
+    execFileSync("find", [join(homedir(), "Library/Caches/ZParen/fasl"), "-path", `*${realpathSync(root)}/src/oops.fasl`]).toString(),
     "it goes where ASDF looks for it",
   ).toContain("oops.fasl");
   await page.keyboard.press("Control+o");
@@ -602,7 +602,7 @@ test("search, replace, outline, back and forward, and the problems panel", async
 });
 
 test("trace calls, step through macros, disassemble and profile", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-tools");
@@ -668,7 +668,7 @@ test("trace calls, step through macros, disassemble and profile", async ({ page 
 });
 
 test("test results as a tree, jump to a test, rerun what failed", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-test");
@@ -725,7 +725,7 @@ test("test results as a tree, jump to a test, rerun what failed", async ({ page 
 });
 
 test("history search, a second REPL while the first is busy, and a long transcript", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-repl");
@@ -776,7 +776,7 @@ test("history search, a second REPL while the first is busy, and a long transcri
 });
 
 test("documentation that follows the cursor, HyperSpec pages, and apropos", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-docs");
@@ -794,7 +794,7 @@ test("documentation that follows the cursor, HyperSpec pages, and apropos", asyn
   await expect(docs.locator(".docs-arglist")).toContainText("control-string");
   const spec = page.frameLocator("[data-testid=hyperspec]");
   await expect(spec.locator("a[name=format]")).toContainText("FORMAT");
-  expect(await spec.locator("body").evaluate((b) => getComputedStyle(b).fontFamily), "the spec takes ZenLisp's look, not its own").toMatch(/apple-system|BlinkMacSystemFont/);
+  expect(await spec.locator("body").evaluate((b) => getComputedStyle(b).fontFamily), "the spec takes ZParen's look, not its own").toMatch(/apple-system|BlinkMacSystemFont/);
   await expect(spec.locator("h1").first(), "and drops the LispWorks picture bar").toBeHidden();
   await shots(page, "21-docs-hyperspec");
   await spec.getByRole("link", { name: "WRITE-LINE" }).click();
@@ -826,7 +826,7 @@ test("documentation that follows the cursor, HyperSpec pages, and apropos", asyn
 });
 
 test("add and remove a dependency from the systems list", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-deps");
@@ -853,7 +853,7 @@ test("add and remove a dependency from the systems list", async ({ page }) => {
 });
 
 test("settings change the editor at once and Lisp when it restarts", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-set");
@@ -932,7 +932,7 @@ test("settings change the editor at once and Lisp when it restarts", async ({ pa
 });
 
 test("split the editor, edit one file in two panes, and drag tabs between them", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-split");
@@ -968,7 +968,7 @@ test("split the editor, edit one file in two panes, and drag tabs between them",
 });
 
 test("git change markers, the inline diff with revert, and status in the file tree", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-git");
@@ -980,7 +980,7 @@ test("git change markers, the inline diff with revert, and status in the file tr
   git("init", "-q");
   git("add", ".");
   git("commit", "-qm", "first");
-  // Commits happen outside ZenLisp; coming back to the window looks again.
+  // Commits happen outside ZParen; coming back to the window looks again.
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   const editor = page.locator(".editor-host");
 
@@ -1025,7 +1025,7 @@ test("without SBCL the first screen says how to get it", async ({ page }) => {
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
 
   const card = page.getByTestId("need-sbcl");
-  await expect(card).toContainText("ZenLisp needs SBCL");
+  await expect(card).toContainText("ZParen needs SBCL");
   await expect(card.getByRole("button", { name: "Install with Homebrew" })).toBeVisible();
   await shots(page, "28-need-sbcl");
   page.once("dialog", (d) => d.accept(sbcl));
@@ -1042,7 +1042,7 @@ test("without SBCL the first screen says how to get it", async ({ page }) => {
 });
 
 test("go to definitions Lisp has not loaded, and see warnings as you type", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-live");
@@ -1103,7 +1103,7 @@ test("go to definitions Lisp has not loaded, and see warnings as you type", asyn
 });
 
 test("saving compiles only what changed, and gd goes to local bindings and back", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-inc");
@@ -1150,7 +1150,7 @@ test("saving compiles only what changed, and gd goes to local bindings and back"
 });
 
 test("a file that uses a package from an unloaded file is still checked, and a compile-time error is reported", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-uses");
@@ -1221,8 +1221,8 @@ test("a file that uses a package from an unloaded file is still checked, and a c
   await expect(page.locator(".repl-buffer"), "checks leave no package or symbol behind in the image").toContainText("(:LEFT-BEHIND NIL NIL)");
 });
 
-test("a loaded file changed outside ZenLisp compiles only what changed", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+test("a loaded file changed outside ZParen compiles only what changed", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-watch");
@@ -1234,9 +1234,9 @@ test("a loaded file changed outside ZenLisp compiles only what changed", async (
   const root = join(parent, "zen-watch");
   const flash = page.getByTestId("flash");
 
-  // After a load ZenLisp records the loaded files as on disk; nothing shows when that is done.
+  // After a load ZParen records the loaded files as on disk; nothing shows when that is done.
   await page.waitForTimeout(1000);
-  // As git or another editor would: the file changes on disk, not in ZenLisp.
+  // As git or another editor would: the file changes on disk, not in ZParen.
   const main = join(root, "src/main.lisp");
   writeFileSync(main, readFileSync(main, "utf8").replace("Hello, ~a!", "Hi, ~a!"));
   await expect(flash, "only the changed function compiles").toHaveText("Compiled greet from disk", { timeout: 10_000 });
@@ -1251,7 +1251,7 @@ test("a loaded file changed outside ZenLisp compiles only what changed", async (
 });
 
 test("the REPL keeps its prompt in view when the debugger opens beside it", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-pin");
@@ -1279,7 +1279,7 @@ test("the REPL keeps its prompt in view when the debugger opens beside it", asyn
 });
 
 test("a DEFPACKAGE error while compiling is a note, and later checks still run", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-wait");
@@ -1307,7 +1307,7 @@ test("a DEFPACKAGE error while compiling is a note, and later checks still run",
 });
 
 test("saving a file Lisp has not loaded compiles all of it, and other files see what it defines", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-fresh");
@@ -1333,7 +1333,7 @@ test("saving a file Lisp has not loaded compiles all of it, and other files see 
 });
 
 test("a file's check compiles the files it depends on first, so their functions are known", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-order");
@@ -1366,7 +1366,7 @@ test("a file's check compiles the files it depends on first, so their functions 
 
 test("a new project can take its dependencies from ocicl", async ({ page }) => {
   test.skip(!existsSync(join(homedir(), ".local/share/ocicl/ocicl-runtime.lisp")), "ocicl is not set up on this Mac");
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-oc");
@@ -1388,7 +1388,7 @@ test("a new project can take its dependencies from ocicl", async ({ page }) => {
 });
 
 test("the project menu creates, opens and closes projects, asking about unsaved files first", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-first");
@@ -1460,7 +1460,7 @@ test("new project names are lowercased as typed, and fields are not autocorrecte
 });
 
 test("the Packages tab lists, adds and removes the project's dependencies", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-pkgs");
@@ -1491,7 +1491,7 @@ test("the Packages tab lists, adds and removes the project's dependencies", asyn
 });
 
 test("Run calls a system's entry point in the REPL", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-run");
@@ -1507,7 +1507,7 @@ test("Run calls a system's entry point in the REPL", async ({ page }) => {
 });
 
 test("the sidebar and the right panel resize by their edges, and keep their widths", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-size");
@@ -1543,7 +1543,7 @@ test("the sidebar and the right panel resize by their edges, and keep their widt
 });
 
 test("package and system names complete where code names them", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-comp");
@@ -1572,7 +1572,7 @@ test("package and system names complete where code names them", async ({ page })
 });
 
 test("a new session loads the systems the last one loaded, and ⌘B loads a file's dependencies", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-again");
@@ -1606,7 +1606,7 @@ test("a new session loads the systems the last one loaded, and ⌘B loads a file
 });
 
 test("a check in a new session loads the system's dependencies, so a package they define is known", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-nick");
@@ -1637,7 +1637,7 @@ test("themes: built-in ones per appearance, and the user's own from the themes f
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect.poll(() => color("--bg"), "Nord's background").toBe("#2e3440");
   await settings.getByRole("button", { name: "Light", exact: true }).click();
-  await expect.poll(() => color("--bg"), "the light theme is ZenLisp's own").toBe("#fbfbfa");
+  await expect.poll(() => color("--bg"), "the light theme is ZParen's own").toBe("#fbfbfa");
 
   const dir = (await settings.getByTestId("themes-dir").textContent())!;
   writeFileSync(join(dir, "paper.json"), JSON.stringify({ name: "Paper", kind: "light", colors: { bg: "#fffff0", "--syn-string": "#a31515" } }));
@@ -1647,16 +1647,16 @@ test("themes: built-in ones per appearance, and the user's own from the themes f
   await settings.getByRole("combobox", { name: "Light theme" }).selectOption({ label: "Paper" });
   await expect.poll(() => color("--bg"), "the user's theme applies").toBe("#fffff0");
   expect(await color("--syn-string")).toBe("#a31515");
-  expect(await color("--text"), "colors it leaves out keep ZenLisp's").toBe("#1d1d1f");
+  expect(await color("--text"), "colors it leaves out keep ZParen's").toBe("#1d1d1f");
   await shots(page, "30-settings-theme");
-  await settings.getByRole("combobox", { name: "Light theme" }).selectOption({ label: "ZenLisp Light" });
-  await settings.getByRole("combobox", { name: "Dark theme" }).selectOption({ label: "ZenLisp Dark" });
+  await settings.getByRole("combobox", { name: "Light theme" }).selectOption({ label: "ZParen Light" });
+  await settings.getByRole("combobox", { name: "Dark theme" }).selectOption({ label: "ZParen Dark" });
   await settings.getByRole("button", { name: "Match System" }).click();
   await expect.poll(() => color("--syn-string"), "switching back removes the theme's colors").toBe("#b4521b");
 });
 
 test("a plugin adds a command with a key, a setting, a save hook and a REPL command", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-plug");
@@ -1670,7 +1670,7 @@ test("a plugin adds a command with a key, a setting, a save hook and a REPL comm
   const example = join(dirname(plugin), "insert-datetime.lisp");
   writeFileSync(
     plugin,
-    `(defpackage #:demo (:use #:cl) (:local-nicknames (#:zp #:zenlisp-plugin)))
+    `(defpackage #:demo (:use #:cl) (:local-nicknames (#:zp #:zparen-plugin)))
 (in-package #:demo)
 (zp:define-setting wrap-with :type :choice :choices ("time" "progn") :default "time" :title "Wrap with")
 (zp:define-command wrap-form (context) (:title "Wrap Form" :key "Mod-Alt-j")
@@ -1746,7 +1746,7 @@ test("a plugin adds a command with a key, a setting, a save hook and a REPL comm
 });
 
 test("word wrap turns on and off from ⌥Z and Settings", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-wrap");
@@ -1766,7 +1766,7 @@ test("word wrap turns on and off from ⌥Z and Settings", async ({ page }) => {
 });
 
 test("K shows a symbol's documentation in a popup at the cursor", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-k");
@@ -1790,7 +1790,7 @@ test("K shows a symbol's documentation in a popup at the cursor", async ({ page 
 });
 
 test("a Markdown file previews rendered, without running HTML it holds", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByPlaceholder("my-app").fill("zen-md");
@@ -1823,4 +1823,15 @@ test("a Markdown file previews rendered, without running HTML it holds", async (
   await expect(preview.locator("h1"), "the preview follows unsaved edits").toHaveText("zen-md, edited");
   await preview.getByRole("link", { name: "the main file" }).click();
   await expect(page.locator(".tab.active"), "a link to a project file opens it").toHaveText(/main\.lisp/);
+});
+
+test("settings saved when ZParen was ZenLisp carry over", async ({ page }) => {
+  await fresh(page);
+  await page.evaluate(() => {
+    localStorage.removeItem("zparen.settings");
+    localStorage.setItem("zenlisp.settings", JSON.stringify({ fontSize: 17 }));
+  });
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--editor-font-size"))).toBe("17px");
+  expect(await page.evaluate(() => localStorage.getItem("zenlisp.settings"))).toBeNull();
 });

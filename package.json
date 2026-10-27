@@ -1,5 +1,5 @@
 {
-  "name": "zenlisp",
+  "name": "zparen",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
-    "gen:types": "cargo test -q -p zenlisp-core export_bindings"
+    "gen:types": "cargo test -q -p zparen-core export_bindings"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.4",

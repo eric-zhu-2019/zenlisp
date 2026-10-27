@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "crates/zenlisp-core", "crates/zenlisp-dev"]
+members = ["src-tauri", "crates/zparen-core", "crates/zparen-dev"]
 exclude = ["crates/parinfer-wasm"]
 
 [workspace.dependencies]

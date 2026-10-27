@@ -1,18 +1,20 @@
-;;;; Plugins: Lisp files in ZenLisp's plugins folder, loaded into every
+;;;; Plugins: Lisp files in ZParen's plugins folder, loaded into every
 ;;;; session, that add commands, checks, settings and hooks. The editor reads
 ;;;; what they add from MANIFEST and runs a command or an editor hook through
 ;;;; RUN-COMMAND and RUN-EDITOR-HOOK, which answer with effects as JSON for the
 ;;;; editor to apply. See docs/plugins.md.
 
-(defpackage #:zenlisp-plugin
+(defpackage #:zparen-plugin
   (:use #:cl)
+  ;; Plugins written when ZParen was ZenLisp name the old package.
+  (:nicknames #:zenlisp-plugin)
   (:export #:define-command #:define-check #:define-setting #:setting #:add-hook #:remove-hook
            #:context-file #:context-text #:context-cursor #:context-selection #:context-package #:context-form
            #:form-start #:form-end #:form-text
            #:replace-range #:insert #:open-file #:message #:repl-print #:note
            #:plugins-directory))
 
-(in-package #:zenlisp-plugin)
+(in-package #:zparen-plugin)
 
 (defvar *directory* nil "The plugins folder, ending in a slash.")
 
@@ -355,7 +357,7 @@ with the effects its hooks asked for."
   "BODY, the hook-running part of a wrapper, whose own mistakes must not stop
 the compile, load, REPL or debugger it wraps."
   `(handler-case (progn ,@body)
-     (serious-condition (c) (format t "~&; ZenLisp plugin hooks failed: ~a~%" c) nil)))
+     (serious-condition (c) (format t "~&; ZParen plugin hooks failed: ~a~%" c) nil)))
 
 (defvar *in-debugger-hook* nil)
 
@@ -385,22 +387,22 @@ the compile, load, REPL or debugger it wraps."
           (unless *in-debugger-hook*
             (let ((*in-debugger-hook* t)) (safely (report (run-hooks :debugger-entered condition)))))
           (funcall f condition)))
-  (wrap 'zenlisp:load-system
+  (wrap 'zparen:load-system
         (lambda (f name)
           (prog1 (funcall f name) (safely (report (run-hooks :after-load-system name))))))
-  (wrap 'zenlisp::record-tests
+  (wrap 'zparen::record-tests
         (lambda (f thunk)
           (let ((run (funcall f thunk))) (safely (report (run-hooks :tests-finished run))) run)))
   ;; Swank's compilation result is a list that starts with :COMPILATION-RESULT.
   (wrap 'swank:compile-file-for-emacs
         (lambda (f filename &rest args)
           (let ((result (apply f filename args)))
-            (unless zenlisp::*checking*
+            (unless zparen::*checking*
               (safely (report (run-hooks :after-compile-file filename
                                          (and (consp result) (eq (first result) :compilation-result)
                                               (swank::compilation-result-successp result))))))
             result)))
-  (pushnew 'run-checks zenlisp::*check-functions*))
+  (pushnew 'run-checks zparen::*check-functions*))
 
 ;;; Loading.
 
@@ -454,4 +456,4 @@ init.lisp or an ASDF system named after the folder."
 
 (defun session-ready ()
   (sb-thread:make-thread (lambda () (report (run-hooks :session-ready (namestring *default-pathname-defaults*))))
-                         :name "zenlisp plugin hooks"))
+                         :name "zparen plugin hooks"))

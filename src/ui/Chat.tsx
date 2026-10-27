@@ -193,12 +193,12 @@ function Setup({ status, onSaved }: { status: AssistantStatus | null; onSaved: (
           <h3>Connect {NAMES[provider]}</h3>
           {provider === "claude" ? (
             <p>
-              Paste an Anthropic API key. ZenLisp also uses <code>ANTHROPIC_API_KEY</code> or an <code>ant auth login</code> profile
+              Paste an Anthropic API key. ZParen also uses <code>ANTHROPIC_API_KEY</code> or an <code>ant auth login</code> profile
               when present. The key is stored only on this Mac.
             </p>
           ) : (
             <p>
-              Paste an OpenAI API key. ZenLisp also uses <code>OPENAI_API_KEY</code> when present. The key is stored only on this Mac.
+              Paste an OpenAI API key. ZParen also uses <code>OPENAI_API_KEY</code> when present. The key is stored only on this Mac.
             </p>
           )}
           <input type="password" placeholder={provider === "claude" ? "sk-ant-…" : "sk-…"} value={key} onChange={(e) => setKey(e.target.value)} />
@@ -209,7 +209,7 @@ function Setup({ status, onSaved }: { status: AssistantStatus | null; onSaved: (
       )}
       <div className="chat-mcp">
         <h3>Use Claude Code with this image</h3>
-        <p>ZenLisp runs an MCP server, so an agent in your terminal can evaluate, compile and debug in this Lisp.</p>
+        <p>ZParen runs an MCP server, so an agent in your terminal can evaluate, compile and debug in this Lisp.</p>
         {mcp ? (
           <>
             <pre>{mcp.claudeCommand}</pre>

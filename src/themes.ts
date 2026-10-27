@@ -1,5 +1,5 @@
 // Themes: values for the color variables styles.css defines. A theme sets
-// any of them; the rest keep ZenLisp's own value for the theme's kind.
+// any of them; the rest keep ZParen's own value for the theme's kind.
 
 import { create } from "zustand";
 import type { ThemeFile } from "./protocol/ThemeFile";
@@ -39,8 +39,8 @@ const solarized = (kind: ThemeKind): Theme["colors"] => {
 };
 
 export const BUILT_IN: Theme[] = [
-  { id: "zenlisp-light", name: "ZenLisp Light", kind: "light", colors: {} },
-  { id: "zenlisp-dark", name: "ZenLisp Dark", kind: "dark", colors: {} },
+  { id: "zparen-light", name: "ZParen Light", kind: "light", colors: {} },
+  { id: "zparen-dark", name: "ZParen Dark", kind: "dark", colors: {} },
   { id: "solarized-light", name: "Solarized Light", kind: "light", colors: solarized("light") },
   { id: "solarized-dark", name: "Solarized Dark", kind: "dark", colors: solarized("dark") },
   {
@@ -73,7 +73,7 @@ export const BUILT_IN: Theme[] = [
   },
 ];
 
-export const DEFAULT_THEME: Record<ThemeKind, string> = { light: "zenlisp-light", dark: "zenlisp-dark" };
+export const DEFAULT_THEME: Record<ThemeKind, string> = { light: "zparen-light", dark: "zparen-dark" };
 
 /**
  * A theme file's theme, or what is wrong with it. The file is JSON:
@@ -114,7 +114,7 @@ export function readThemeFiles(dir: string, files: ThemeFile[]) {
 
 export const allThemes = (user: Theme[]) => [...BUILT_IN, ...user];
 
-/** The theme for `kind` among `themes`, by id, falling back to ZenLisp's own. */
+/** The theme for `kind` among `themes`, by id, falling back to ZParen's own. */
 export function themeFor(kind: ThemeKind, id: string, themes: Theme[]): Theme {
   return themes.find((t) => t.id === id && t.kind === kind) ?? BUILT_IN.find((t) => t.id === DEFAULT_THEME[kind])!;
 }

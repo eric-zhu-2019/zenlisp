@@ -1357,7 +1357,7 @@ stack."
       (with-input-from-string (s source-code)
         (let* ((pos (stream-source-position code-location s))
                (snippet (read-snippet s pos)))
-          ;; ZenLisp: :position is 1-based everywhere else; the stream position is 0-based.
+          ;; ZParen: :position is 1-based everywhere else; the stream position is 0-based.
           (make-location `(:file ,filename)
                          `(:position ,(1+ pos))
                          `(:snippet ,snippet)))))))

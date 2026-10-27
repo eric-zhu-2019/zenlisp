@@ -1,6 +1,6 @@
 ;;;; Tracing, profiling and disassembly, reported as data for the IDE's panels.
 
-(in-package #:zenlisp)
+(in-package #:zparen)
 
 (defun spec-name (spec)
   "SPEC printed so that reading it back in any package finds it again."
@@ -36,7 +36,7 @@
 ;;; were already running when profiling began (Swank's request loop, EVAL)
 ;;; would each show at 100%. They are left out, as is the IDE's own code.
 
-(defparameter *hidden-packages* '("SWANK" "SWANK/BACKEND" "SWANK/SBCL" "SWANK-REPL" "SWANK/RPC" "ZENLISP"))
+(defparameter *hidden-packages* '("SWANK" "SWANK/BACKEND" "SWANK/SBCL" "SWANK-REPL" "SWANK/RPC" "ZPAREN"))
 
 (defvar *outside-frames* '()
   "Names of the frames on the profiling thread's stack when profiling began.")

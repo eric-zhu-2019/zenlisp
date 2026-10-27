@@ -1,15 +1,19 @@
-# ZenLisp
+# ZParen
 
-ZenLisp is a Common Lisp IDE for macOS, built on SBCL. You work in one live
+ZParen is a Common Lisp IDE for macOS, built on SBCL. You work in one live
 image: evaluate a form, click the result to inspect the real object, stop in
 the debugger, fix the code, and restart the frame that failed. Claude can work
 in the same image, from the built-in assistant or from Claude Code over MCP.
+
+ZParen was called ZenLisp until October 2026. Its first start copies
+ZenLisp's settings, API keys, MCP token, themes, plugins and conversations.
+The old folders stay where they were.
 
 ![The REPL, the debugger with its restarts and backtrace, and the inspector](docs/screenshots/debugger.png)
 
 ## Written entirely by Claude Code
 
-ZenLisp is a vibe-coding project. [Claude Code](https://claude.com/claude-code)
+ZParen is a vibe-coding project. [Claude Code](https://claude.com/claude-code)
 wrote all of it: the Rust backend, the TypeScript UI, the Lisp that runs inside
 SBCL, the tests, the build and release scripts, and these docs. It ran on
 Claude Opus 5.5. The human author wrote no code. They asked for features,
@@ -24,7 +28,7 @@ SBCL, and fixes come with tests.
 
 Claude Code ran with the pstack plugin's `/pstack:poteto-mode`, which sets how
 it plans, builds and verifies work. It loaded these skills while building
-ZenLisp:
+ZParen:
 
 | Skill | What it was used for |
 | --- | --- |
@@ -86,7 +90,7 @@ worktree:
 
 ## Run it
 
-You need Node.js, Rust and SBCL. ZenLisp looks for `sbcl` on `PATH`, then in
+You need Node.js, Rust and SBCL. ZParen looks for `sbcl` on `PATH`, then in
 `/opt/homebrew/bin`, `/usr/local/bin`, and `/opt/local/bin`. Release builds
 carry their own SBCL, so they run on Macs without one.
 
@@ -95,13 +99,13 @@ To build and open the app:
 ```sh
 npm install
 npx tauri build --bundles app
-open target/release/bundle/macos/ZenLisp.app
+open target/release/bundle/macos/ZParen.app
 ```
 
 For development, run `npx tauri dev`.
 
 The first start builds an SBCL core with Swank preloaded and caches it in
-`~/Library/Caches/ZenLisp`. That takes about two seconds. Later starts take
+`~/Library/Caches/ZParen`. That takes about two seconds. Later starts take
 milliseconds, and the core rebuilds by itself when SBCL or the bundled Lisp
 files change.
 
@@ -117,7 +121,7 @@ target. It takes its dependencies from Quicklisp, or from ocicl with each
 version pinned in `ocicl.csv`. To use ocicl, run `brew install ocicl` and
 `ocicl setup` once.
 
-ZenLisp finds the dependency manager from the files in the project root:
+ZParen finds the dependency manager from the files in the project root:
 
 | Found in the root | Manager | Dependencies come from |
 | --- | --- | --- |
@@ -153,7 +157,7 @@ and `gpt-6.1-sol`, and you can type any other model name. **Stop** ends a reply
 and any Lisp code the assistant was running for it.
 
 Each provider needs an API key, which you can paste in the assistant. For
-Claude, ZenLisp also uses `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or an
+Claude, ZParen also uses `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or an
 `ant auth login` profile. For OpenAI, it uses `OPENAI_API_KEY`. Set
 `OPENAI_BASE_URL` to use another server that offers the Responses API.
 
@@ -164,11 +168,11 @@ To let Claude Code work in your image, copy the command from the assistant
 settings and run it in a terminal. It looks like this:
 
 ```sh
-claude mcp add --transport http zenlisp http://127.0.0.1:7337/mcp --header "Authorization: Bearer <token>"
+claude mcp add --transport http zparen http://127.0.0.1:7337/mcp --header "Authorization: Bearer <token>"
 ```
 
 The server listens only on `127.0.0.1` and checks the token on every request.
-The token lives in `~/Library/Application Support/ZenLisp/mcp-token`.
+The token lives in `~/Library/Application Support/ZParen/mcp-token`.
 
 The tools are `eval`, `compile_form`, `describe_symbol`, `apropos`,
 `find_definitions`, `who_calls`, `macroexpand`, `list_packages`,
@@ -226,7 +230,7 @@ slurp, barf, raise, splice, kill, transpose, split, and join. In Vim,
 form, so `daf` and `cif` work as you would expect.
 
 The file tree creates, renames, and moves files to the Trash. When another
-program changes an open file, ZenLisp reloads it if you have no unsaved
+program changes an open file, ZParen reloads it if you have no unsaved
 edits, and asks otherwise. It also asks before closing a file or quitting
 with unsaved changes. Files outside the project, such as SBCL's own sources opened by go to
 definition, are read-only and marked with a lock.
@@ -240,7 +244,7 @@ tab is showing.
 
 ```mermaid
 flowchart TB
-  subgraph app["ZenLisp.app"]
+  subgraph app["ZParen.app"]
     direction TB
     subgraph ui["Web UI, src/"]
       direction LR
@@ -268,7 +272,7 @@ flowchart TB
   apis["Claude and<br/>OpenAI APIs"]
   agents["Claude Code,<br/>MCP clients"]
   sbcl["SBCL image<br/>Swank, your code"]
-  dev["zenlisp-dev<br/>browser bridge"]
+  dev["zparen-dev<br/>browser bridge"]
   assistant <-- "HTTPS" --> apis
   agents --> mcp
   session <-- "Swank socket" --> sbcl
@@ -280,13 +284,13 @@ in Rust and renders the events that come back. The TypeScript types for both
 are generated from the Rust ones into `src/protocol`.
 
 The Workbench owns one SBCL process and talks to it over Swank, the protocol
-SLIME uses. ZenLisp's own Lisp code in `resources/lisp` loads into that image
+SLIME uses. ZParen's own Lisp code in `resources/lisp` loads into that image
 beside Swank, and so do your project and your plugins.
 
 The assistant and outside agents reach the image through the same tools, so
-what they evaluate is what you see in the REPL. In development, `zenlisp-dev`
+what they evaluate is what you see in the REPL. In development, `zparen-dev`
 serves the same Workbench over a WebSocket. That lets the UI run in a browser,
-where the end-to-end tests drive it. [How ZenLisp is built](docs/architecture.md)
+where the end-to-end tests drive it. [How ZParen is built](docs/architecture.md)
 explains why it is designed this way.
 
 ## Develop
@@ -298,15 +302,15 @@ Add `--network` to include the ocicl test, which downloads from `ghcr.io`.
 To run the UI in a browser against a real SBCL, start the bridge and Vite:
 
 ```sh
-cargo run -p zenlisp-dev
+cargo run -p zparen-dev
 npx vite --port 1420
 ```
 
-Set `ZENLISP_TRACE=1` to log every Swank message.
+Set `ZPAREN_TRACE=1` to log every Swank message.
 
 ## Release
 
-`scripts/release.sh` builds `ZenLisp.app` and its disk image, signs both with
+`scripts/release.sh` builds `ZParen.app` and its disk image, signs both with
 a Developer ID, and checks the signatures. The app carries a copy of the
 installed SBCL (`scripts/bundle-sbcl.sh`), so it runs on Macs without SBCL. That
 copy is signed with the hardened runtime and the entitlements SBCL needs to
@@ -314,14 +318,14 @@ compile code.
 
 ```sh
 security find-identity -v -p codesigning            # pick a Developer ID Application identity
-ZENLISP_SIGN_IDENTITY="Developer ID Application: …" scripts/release.sh
+ZPAREN_SIGN_IDENTITY="Developer ID Application: …" scripts/release.sh
 ```
 
 To notarize, save notarytool credentials once, then pass the profile:
 
 ```sh
-xcrun notarytool store-credentials zenlisp --apple-id you@example.com --team-id TEAMID
-ZENLISP_SIGN_IDENTITY="…" NOTARY_PROFILE=zenlisp scripts/release.sh
+xcrun notarytool store-credentials zparen --apple-id you@example.com --team-id TEAMID
+ZPAREN_SIGN_IDENTITY="…" NOTARY_PROFILE=zparen scripts/release.sh
 ```
 
 The script submits the disk image, waits for Apple, and staples the ticket to
@@ -329,14 +333,14 @@ the image and the app, so Gatekeeper opens them offline.
 
 To ship updates, make a key pair once with `npx tauri signer generate` and
 keep the private half safe. Builds made with the update variables check for a
-newer release at launch and from ZenLisp ▸ Check for Updates…, and install only
+newer release at launch and from ZParen ▸ Check for Updates…, and install only
 archives signed with that key:
 
 ```sh
-ZENLISP_UPDATE_URL=https://example.com/zenlisp/latest.json \
-ZENLISP_UPDATE_DOWNLOAD=https://example.com/zenlisp/ZenLisp.app.tar.gz \
-ZENLISP_UPDATE_PUBKEY="$(cat zenlisp.key.pub)" TAURI_SIGNING_PRIVATE_KEY="$(cat zenlisp.key)" \
-ZENLISP_SIGN_IDENTITY="…" scripts/release.sh
+ZPAREN_UPDATE_URL=https://example.com/zparen/latest.json \
+ZPAREN_UPDATE_DOWNLOAD=https://example.com/zparen/ZParen.app.tar.gz \
+ZPAREN_UPDATE_PUBKEY="$(cat zparen.key.pub)" TAURI_SIGNING_PRIVATE_KEY="$(cat zparen.key)" \
+ZPAREN_SIGN_IDENTITY="…" scripts/release.sh
 ```
 
 The script writes `latest.json` beside the archive. Publish both at those
@@ -344,13 +348,13 @@ URLs. A build without these variables has updates turned off and says so.
 
 ## Learn more
 
-[How ZenLisp is built](docs/architecture.md) explains the design.
-[What ZenLisp borrows from TurboLisp](docs/inspiration.md) lists the ideas taken
+[How ZParen is built](docs/architecture.md) explains the design.
+[What ZParen borrows from TurboLisp](docs/inspiration.md) lists the ideas taken
 from TurboLisp and WhateverCLIM.
 
 ## License
 
-ZenLisp is MIT licensed. See [LICENSE](LICENSE). It includes Swank from
+ZParen is MIT licensed. See [LICENSE](LICENSE). It includes Swank from
 [SLIME](https://github.com/slime/slime) in `resources/swank`, which is in the
 public domain, and the parinfer engine from
 [parinfer-rust](https://github.com/eraserhd/parinfer-rust) in

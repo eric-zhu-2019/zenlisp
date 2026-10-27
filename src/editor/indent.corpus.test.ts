@@ -9,7 +9,7 @@ import { forms, parse } from "../lisp/tree";
 import { lispIndentation, reindentRange } from "./indent";
 
 // SLIME's defaults ("basic-common" style). A case that sets any of these to
-// something else tests an option ZenLisp does not have.
+// something else tests an option ZParen does not have.
 const DEFAULTS: Record<string, string> = {
   "lisp-lambda-list-keyword-parameter-alignment": "nil",
   "lisp-lambda-list-keyword-alignment": "nil",

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs every ZenLisp check and exits non-zero on the first failure. Each
+# Runs every ZParen check and exits non-zero on the first failure. Each
 # SBCL-backed test binary gets a hard time limit, because a Swank request that
 # never returns hangs forever otherwise.
 # Usage: scripts/verify.sh [--network]   (--network adds tests that need ghcr.io)
@@ -9,7 +9,7 @@ limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
 extra=()
 # The tests' Lisps use none of the user's folders: no plugins, settings or
 # saved conversations of theirs are read, changed or moved.
-export ZENLISP_CONFIG_DIR=$(mktemp -d) ZENLISP_DATA_DIR=$(mktemp -d)
+export ZPAREN_CONFIG_DIR=$(mktemp -d) ZPAREN_DATA_DIR=$(mktemp -d)
 [ "${1:-}" = "--network" ] && extra=(--include-ignored)
 
 echo "== rust"
@@ -29,7 +29,7 @@ for b in $bins; do
   echo "$out" | grep "test result"
 done
 git checkout -q -- src/protocol 2>/dev/null || true
-cargo test -q -p zenlisp-core export_bindings >/dev/null
+cargo test -q -p zparen-core export_bindings >/dev/null
 
 echo "== parinfer wasm"
 (cd crates/parinfer-wasm && cargo test -q)

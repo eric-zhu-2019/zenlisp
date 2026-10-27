@@ -121,7 +121,7 @@ function ThemeRows() {
     <>
       <Row label="Light theme">{picker("light")}</Row>
       <Row label="Dark theme">{picker("dark")}</Row>
-      <Row label="Your themes" hint='A theme is a JSON file in the themes folder: { "name": "Paper", "kind": "light", "colors": { "bg": "#ffffff", "syn-string": "#a31515" } }. Colors left out keep ZenLisp’s.'>
+      <Row label="Your themes" hint='A theme is a JSON file in the themes folder: { "name": "Paper", "kind": "light", "colors": { "bg": "#ffffff", "syn-string": "#a31515" } }. Colors left out keep ZParen’s.'>
         <div className="path-input">
           <button className="btn" disabled={!dir} onClick={() => revealInFinder(dir)}>
             Open Themes Folder
@@ -290,7 +290,7 @@ function General() {
       </Row>
       <Row label="Saving" hint="Compiles each top-level form that changed into the running Lisp, so go to definition and references follow your edits. Files of systems not loaded yet are only saved. Changes from git or another editor to a loaded file compile the same way.">
         <Toggle label="Compile changes when saving" checked={s.compileOnSave} onChange={(compileOnSave) => put({ compileOnSave })} />
-        <Toggle label="Compile changes made outside ZenLisp" checked={s.compileOnChange} onChange={(compileOnChange) => put({ compileOnChange })} />
+        <Toggle label="Compile changes made outside ZParen" checked={s.compileOnChange} onChange={(compileOnChange) => put({ compileOnChange })} />
       </Row>
     </>
   );
@@ -354,7 +354,7 @@ function Lisp() {
           <span className="setting-hint">MB</span>
         </div>
       </Row>
-      <Row label="Startup" hint="An init file can break the connection ZenLisp needs, so it is off by default.">
+      <Row label="Startup" hint="An init file can break the connection ZParen needs, so it is off by default.">
         <Toggle label="Load ~/.sbclrc" checked={draft.loadUserinit} onChange={(loadUserinit) => save({ ...draft, loadUserinit })} />
       </Row>
       <Row label="Debugging" hint="Keeps locals and stepping for code you compile, at some cost in speed. Builds are not affected.">
@@ -467,7 +467,7 @@ function KeyRow({ provider, status, onSaved }: { provider: Provider; status: Pro
           : source === "ant"
             ? "Taken from the ant command line tool's login."
             : status.configured
-              ? "Saved in ZenLisp's data folder."
+              ? "Saved in ZParen's data folder."
               : `${name} models need an API key.`
       }
     >

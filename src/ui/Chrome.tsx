@@ -18,7 +18,7 @@ export function TitleBar() {
     <header className="titlebar" data-tauri-drag-region>
       {status.project ? <ProjectMenu name={status.project.name} root={status.project.root} /> : (
         <span className="project-name" data-tauri-drag-region>
-          ZenLisp
+          ZParen
         </span>
       )}
       <button
@@ -115,7 +115,7 @@ function ProjectMenu({ name, root }: { name: string; root: string }) {
 }
 
 /** The drag payload of a tab: which file, from which pane. */
-const TAB_DRAG = "application/x-zenlisp-tab";
+const TAB_DRAG = "application/x-zparen-tab";
 
 export function readTabDrag(e: React.DragEvent): { path: string; pane: number } | null {
   try {
@@ -309,8 +309,8 @@ function NeedSbcl({ onFound }: { onFound: () => void }) {
   }, [done]);
   return (
     <div className="need-sbcl" data-testid="need-sbcl">
-      <h2>ZenLisp needs SBCL</h2>
-      <p>SBCL is the Common Lisp compiler ZenLisp runs your code in. This Mac does not seem to have it.</p>
+      <h2>ZParen needs SBCL</h2>
+      <p>SBCL is the Common Lisp compiler ZParen runs your code in. This Mac does not seem to have it.</p>
       <div className="actions">
         <button
           className="btn primary"
@@ -375,7 +375,7 @@ export function Welcome({ onNew }: { onNew: () => void }) {
     <div className="empty">
       <div>
         <div className="lambda">λ</div>
-        <h1>ZenLisp</h1>
+        <h1>ZParen</h1>
         <div>A live Common Lisp workbench on SBCL.</div>
         <div className="actions">
           <button className="btn primary" onClick={() => openProjectFlow()}>

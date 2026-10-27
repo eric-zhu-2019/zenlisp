@@ -1,4 +1,4 @@
-// Every key binding in ZenLisp. The editor keymap, the Vim mappings, the
+// Every key binding in ZParen. The editor keymap, the Vim mappings, the
 // window shortcuts and the help screen are all built from this table.
 
 import type { KeyBinding } from "@codemirror/view";

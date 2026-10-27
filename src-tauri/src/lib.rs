@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager};
-use zenlisp_core::session::SessionConfig;
-use zenlisp_core::workbench::{Request, Response, Workbench};
+use zparen_core::session::SessionConfig;
+use zparen_core::workbench::{Request, Response, Workbench};
 
 struct AppState(Arc<Workbench>);
 
@@ -42,19 +42,19 @@ async fn check_for_update(app: tauri::AppHandle, asked: bool) {
     };
     match found {
         Ok(Some(update)) => {
-            eprintln!("zenlisp: update {} available (running {current})", update.version);
+            eprintln!("zparen: update {} available (running {current})", update.version);
             let n = news("available", &update.version, update.body.as_deref().unwrap_or(""));
             *updates.pending.lock().await = Some(update);
             let _ = app.emit("update", n);
         }
         Ok(None) => {
-            eprintln!("zenlisp: {current} is the latest release");
+            eprintln!("zparen: {current} is the latest release");
             if asked {
                 let _ = app.emit("update", news("current", &current, ""));
             }
         }
         Err(e) => {
-            eprintln!("zenlisp: update check failed: {e}");
+            eprintln!("zparen: update check failed: {e}");
             if asked {
                 let _ = app.emit("update", news("error", &current, &e.to_string()));
             }
@@ -86,7 +86,7 @@ async fn rpc(state: tauri::State<'_, AppState>, req: Request) -> Result<Response
 fn resources_dir(app: &tauri::App) -> PathBuf {
     let bundled = app.path().resource_dir().map(|d| d.join("resources"));
     match bundled {
-        Ok(d) if d.join("lisp/zenlisp.lisp").is_file() => d,
+        Ok(d) if d.join("lisp/zparen.lisp").is_file() => d,
         _ => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../resources"),
     }
 }
@@ -94,7 +94,7 @@ fn resources_dir(app: &tauri::App) -> PathBuf {
 /// The File menu's Open Recent submenu, rebuilt whenever the UI's list of recent projects changes.
 struct RecentMenu(Submenu<tauri::Wry>);
 
-/// macOS's standard menus, with project items at the top of File and ZenLisp's
+/// macOS's standard menus, with project items at the top of File and ZParen's
 /// own Help items in front of the system's search field.
 fn menu(app: &tauri::AppHandle) -> tauri::Result<(Menu<tauri::Wry>, Submenu<tauri::Wry>)> {
     let menu = Menu::default(app)?;
@@ -194,14 +194,15 @@ fn percent_decode(path: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // SAFETY: no other thread exists yet. Without it, ocicl, qlot and Homebrew's SBCL are not found.
-    unsafe { zenlisp_core::project::use_tool_path() };
+    unsafe { zparen_core::project::use_tool_path() };
+    zparen_core::session::adopt_zenlisp_folders();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         // The HyperSpec's pages, served unmodified from the local copy.
         .register_uri_scheme_protocol("clhs", |_ctx, request| {
             let path = percent_decode(request.uri().path());
-            match zenlisp_core::docs::hyperspec().and_then(|hs| hs.read(&path)) {
+            match zparen_core::docs::hyperspec().and_then(|hs| hs.read(&path)) {
                 Some((bytes, mime)) => tauri::http::Response::builder().header("Content-Type", mime).body(bytes).unwrap(),
                 None => tauri::http::Response::builder().status(404).body(Vec::new()).unwrap(),
             }
@@ -225,8 +226,8 @@ pub fn run() {
             });
             let mcp_wb = wb.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = zenlisp_core::mcp::start(mcp_wb).await {
-                    eprintln!("ZenLisp MCP server did not start: {e}");
+                if let Err(e) = zparen_core::mcp::start(mcp_wb).await {
+                    eprintln!("ZParen MCP server did not start: {e}");
                 }
             });
             app.manage(AppState(wb));
@@ -255,7 +256,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![rpc, quit, install_update, set_recent_projects])
         .build(tauri::generate_context!())
-        .expect("error while building ZenLisp")
+        .expect("error while building ZParen")
         .run(|app, event| {
             // ⌘Q asks the UI first; `quit` exits with an explicit code, which passes through.
             if let tauri::RunEvent::ExitRequested { api, code: None, .. } = &event {

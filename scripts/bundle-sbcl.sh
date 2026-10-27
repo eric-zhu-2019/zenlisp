@@ -13,8 +13,8 @@ if [ -z "$prefix" ] || [ ! -d "$prefix" ]; then
   exit 0
 fi
 cellar=$(cd "$prefix" && pwd -P)
-# ZENLISP_SIGN_IDENTITY signs the bundle for distribution; without it, an ad hoc signature runs locally.
-identity=${ZENLISP_SIGN_IDENTITY:--}
+# ZPAREN_SIGN_IDENTITY signs the bundle for distribution; without it, an ad hoc signature runs locally.
+identity=${ZPAREN_SIGN_IDENTITY:--}
 stamp="$(basename "$cellar") signed:$identity"
 if [ -f "$out/VERSION" ] && [ "$(cat "$out/VERSION")" = "$stamp" ]; then
   exit 0
