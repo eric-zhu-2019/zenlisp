@@ -242,36 +242,36 @@ tab is showing.
 flowchart TB
   subgraph app["ZenLisp.app"]
     direction TB
-    subgraph ui["Web view, in src/"]
+    subgraph ui["Web UI, src/"]
       direction LR
-      editor["Editor<br/>CodeMirror 6, parinfer,<br/>Vim and Emacs keys"]
-      panels["REPL, debugger, inspector,<br/>Problems, Tests, Trace, Profile"]
+      editor["Editor<br/>CodeMirror 6"]
+      panels["REPL, debugger<br/>and panels"]
       chat["Assistant chat"]
-      store["store.ts<br/>React state for the UI"]
+      store["store.ts<br/>UI state"]
       editor & panels & chat <--> store
     end
-    subgraph core["zenlisp-core, in Rust"]
+    subgraph core["Rust core"]
       direction TB
-      wb["Workbench<br/>requests in, events out"]
-      local["Files, git, search,<br/>HyperSpec"]
-      assistant["Assistant<br/>Claude or OpenAI"]
-      mcp["MCP server<br/>127.0.0.1, with a token"]
-      tools["Tools<br/>eval, compile, tests,<br/>debugger, files"]
-      session["Session<br/>starts SBCL, speaks Swank"]
+      wb["Workbench"]
+      local["Files, git,<br/>search, docs"]
+      assistant["Assistant<br/>Claude, OpenAI"]
+      mcp["MCP server"]
+      tools["Lisp tools"]
+      session["Session<br/>runs SBCL"]
       wb --> local & assistant & session
       assistant --> tools
       mcp --> tools
       tools --> session
     end
-    store <-- "Tauri rpc and app-event" --> wb
+    store <-- "Tauri IPC" --> wb
   end
-  apis["Anthropic and OpenAI APIs"]
-  agents["Claude Code and<br/>other MCP clients"]
-  sbcl["SBCL image<br/>Swank, resources/lisp,<br/>your project and plugins"]
-  dev["zenlisp-dev<br/>WebSocket bridge for a<br/>browser and the e2e tests"]
-  assistant <-- "HTTPS, streamed" --> apis
+  apis["Claude and<br/>OpenAI APIs"]
+  agents["Claude Code,<br/>MCP clients"]
+  sbcl["SBCL image<br/>Swank, your code"]
+  dev["zenlisp-dev<br/>browser bridge"]
+  assistant <-- "HTTPS" --> apis
   agents --> mcp
-  session <-- "Swank over a local socket" --> sbcl
+  session <-- "Swank socket" --> sbcl
   dev -.-> wb
 ```
 
