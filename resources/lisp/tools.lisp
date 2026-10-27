@@ -135,3 +135,10 @@ its function is named in this package, which profiles leave out."
           do (setf fun (sb-impl::encapsulation-info-definition info)))
     (with-output-to-string (*standard-output*)
       (disassemble fun))))
+
+(defun abort-requests (ids)
+  "Unwinds the threads still answering the Swank requests IDS."
+  (dolist (thread (sb-thread:list-all-threads))
+    (when (and (not (eq thread sb-thread:*current-thread*))
+               (intersection ids (sb-thread:symbol-value-in-thread 'swank::*pending-continuations* thread nil)))
+      (ignore-errors (sb-thread:interrupt-thread thread (lambda () (abort)))))))

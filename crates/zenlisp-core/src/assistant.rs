@@ -1,11 +1,13 @@
+use crate::sexp::Sexp;
+use crate::swank::{SENT, Thread};
 use crate::tools;
 use crate::workbench::Workbench;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use tokio::sync::Mutex;
-use tokio::task::AbortHandle;
+use tokio::task::JoinHandle;
 use ts_rs::TS;
 
 /// The models offered for each provider, the default first. Any other name can be typed in.
@@ -112,13 +114,20 @@ enum Credential {
     OAuth(String),
 }
 
+/// The turn being answered, and the Lisp requests its tools have sent.
+struct Running {
+    task: JoinHandle<()>,
+    sent: Arc<std::sync::Mutex<Vec<u64>>>,
+    wb: Weak<Workbench>,
+}
+
 pub struct Assistant {
     http: reqwest::Client,
     data_dir: PathBuf,
     base_url: String,
     openai_url: String,
     history: Mutex<Vec<Value>>,
-    running: Mutex<Option<AbortHandle>>,
+    running: Mutex<Option<Running>>,
     /// Where conversations are kept, one JSON file each, so they outlive the app.
     sessions_dir: PathBuf,
     /// The id of the conversation `history` belongs to.
@@ -274,7 +283,7 @@ impl Assistant {
 
     pub async fn status(&self) -> AssistantStatus {
         AssistantStatus {
-            busy: self.running.lock().await.as_ref().is_some_and(|h| !h.is_finished()),
+            busy: self.running.lock().await.as_ref().is_some_and(|r| !r.task.is_finished()),
             config: self.config(),
             claude: self.provider_status(Provider::Claude, &CLAUDE_MODELS).await,
             openai: self.provider_status(Provider::OpenAI, &OPENAI_MODELS).await,
@@ -305,10 +314,22 @@ impl Assistant {
         *self.session.lock().await = new_session_id();
     }
 
+    /// Stops the turn being answered, and the Lisp work its tools started.
     pub async fn cancel(&self) {
-        if let Some(h) = self.running.lock().await.take() {
-            h.abort();
+        let Some(run) = self.running.lock().await.take() else { return };
+        run.task.abort();
+        let _ = run.task.await;
+        let sent = std::mem::take(&mut *run.sent.lock().unwrap());
+        if let Some(wb) = run.wb.upgrade()
+            && let Ok(session) = wb.session().await
+        {
+            let ids = session.conn.unanswered(&sent).await;
+            if !ids.is_empty() {
+                let ids = Sexp::list(std::iter::once(Sexp::sym("cl:list")).chain(ids.into_iter().map(|id| Sexp::Int(id as i64))));
+                let _ = session.conn.rex(Sexp::list([Sexp::sym("zenlisp::abort-requests"), ids]), "COMMON-LISP-USER", Thread::T).await;
+            }
         }
+        close_tool_calls(&mut *self.history.lock().await);
     }
 
     /// Starts a turn in the background. Events stream through `emit`.
@@ -321,11 +342,13 @@ impl Assistant {
         emit: Emit,
     ) -> Result<(), String> {
         let mut running = self.running.lock().await;
-        if running.as_ref().is_some_and(|h| !h.is_finished()) {
+        if running.as_ref().is_some_and(|r| !r.task.is_finished()) {
             return Err("the assistant is still answering".into());
         }
         let me = self.clone();
-        let task = tokio::spawn(async move {
+        let sent = Arc::default();
+        let weak = Arc::downgrade(&wb);
+        let task = tokio::spawn(SENT.scope(Arc::clone(&sent), async move {
             emit(AssistantEvent::TurnStarted);
             let stop_reason = match me.turn(&wb, user_message(&text, context.as_ref()), &emit).await {
                 Ok(reason) => reason,
@@ -336,8 +359,8 @@ impl Assistant {
             };
             me.save(project).await;
             emit(AssistantEvent::TurnFinished { stop_reason });
-        });
-        *running = Some(task.abort_handle());
+        }));
+        *running = Some(Running { task, sent, wb: weak });
         Ok(())
     }
 
@@ -622,6 +645,22 @@ fn user_message(text: &str, context: Option<&EditorContext>) -> Value {
     }
     content.push(json!({ "type": "text", "text": text }));
     json!({ "role": "user", "content": content })
+}
+
+/// A turn stopped while its tools ran leaves their calls without results,
+/// which the next request may not; each gets one saying it was stopped.
+fn close_tool_calls(history: &mut Vec<Value>) {
+    let Some(last) = history.last().filter(|m| m["role"] == "assistant") else { return };
+    let results: Vec<Value> = last["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|b| b["type"] == "tool_use")
+        .map(|b| json!({ "type": "tool_result", "tool_use_id": b["id"], "content": "Stopped by the user before it finished.", "is_error": true }))
+        .collect();
+    if !results.is_empty() {
+        history.push(json!({ "role": "user", "content": results }));
+    }
 }
 
 async fn run_tool(wb: &Arc<Workbench>, call: ToolCall, truncated: bool, emit: &Emit) -> Value {

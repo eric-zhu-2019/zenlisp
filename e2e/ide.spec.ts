@@ -284,6 +284,46 @@ test("assistant runs tools in the live image and its code can be inserted", asyn
   await expect(row, "and one can be deleted").toHaveCount(0);
 });
 
+test("Stop ends the assistant's turn, and the Lisp work its tools started", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-stop");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  await page.getByTitle("AI assistant (⌘L)").click();
+  const input = page.getByPlaceholder("Ask Claude…  ⏎ to send");
+  const stop = page.getByRole("button", { name: "Stop", exact: true });
+
+  await input.fill("Think slowly about this");
+  await page.keyboard.press("Enter");
+  await page.locator(".chat-assistant").last().getByText("Thought process").click();
+  await expect(page.locator(".chat-assistant").last()).toContainText("step 3");
+  await stop.click();
+  await expect(page.locator(".chat-working")).toHaveCount(0);
+  const thought = await page.locator(".chat-assistant").last().innerText();
+  await page.waitForTimeout(1000);
+  expect(await page.locator(".chat-assistant").last().innerText(), "the thinking stops").toBe(thought);
+
+  await input.fill("Sleep a while");
+  await page.keyboard.press("Enter");
+  const tool = page.locator(".chat-tool").last();
+  await expect(tool).toContainText("(sleep 30)");
+  await page.waitForTimeout(1000);
+  await stop.click();
+  await tool.locator(".chat-tool-head").click();
+  await expect(tool.locator(".chat-tool-body"), "the tool call says it was stopped").toContainText("Stopped by the user before it finished.");
+  await page.locator(".panel-tab", { hasText: "REPL" }).click();
+  await replEval(page, "(boundp 'cl-user::*unwound*)");
+  await expect(page.locator(".repl-buffer"), "the form it was evaluating unwound").toContainText(/\(boundp 'cl-user::\*unwound\*\)\s*T\s*CL-USER>/);
+
+  await input.fill("What is six times seven?");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".chat-assistant strong").last(), "the next question is answered").toHaveText("42");
+  await expect(page.locator(".chat-error")).toHaveCount(0);
+});
+
 test("vim editing with parinfer, completion, arglists, notes and definitions", async ({ page }) => {
   const parent = mkdtempSync(join(tmpdir(), "zenlisp-e2e-"));
   await fresh(page);

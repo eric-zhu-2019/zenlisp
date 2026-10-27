@@ -413,7 +413,10 @@ function reduceAssistant(s: State, e: AssistantEvent): Partial<State> {
       chat.push({ id: id(), role: "error", text: e.message });
       return { chat };
     case "turnFinished":
-      return { chatBusy: false };
+      return {
+        chatBusy: false,
+        chat: chat.map((c) => (c.role === "tool" && c.ok === null ? { ...c, ok: false, output: "Stopped by the user before it finished." } : c)),
+      };
   }
 }
 

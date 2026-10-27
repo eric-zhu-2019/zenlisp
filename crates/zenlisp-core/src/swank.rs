@@ -325,6 +325,11 @@ pub enum RexError {
 
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Sexp, String>>>>>;
 
+tokio::task_local! {
+    /// Collects the ids of the requests sent inside it, so whoever started them can stop them.
+    pub static SENT: Arc<std::sync::Mutex<Vec<u64>>>;
+}
+
 /// A live Swank connection. Cheap to clone.
 #[derive(Clone)]
 pub struct Connection {
@@ -410,8 +415,15 @@ impl Connection {
     }
 
     /// Evaluates `form` in Swank and waits for its `:return`.
+    /// Which of `ids` Lisp has not answered yet.
+    pub async fn unanswered(&self, ids: &[u64]) -> Vec<u64> {
+        let pending = self.pending.lock().await;
+        ids.iter().copied().filter(|id| pending.contains_key(id)).collect()
+    }
+
     pub async fn rex(&self, form: Sexp, package: &str, thread: Thread) -> Result<Sexp, RexError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let _ = SENT.try_with(|sent| sent.lock().unwrap().push(id));
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id, tx);
         let msg = Sexp::list([Sexp::kw("emacs-rex"), form, Sexp::str(package), thread.to_sexp(), Sexp::Int(id as i64)]);

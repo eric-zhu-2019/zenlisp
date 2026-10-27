@@ -604,7 +604,12 @@ async fn project_info(wb: Arc<Workbench>) -> Result<String, String> {
 
 async fn system_task(wb: Arc<Workbench>, a: Args, kind: SystemTask) -> Result<String, String> {
     let c = conn(&wb).await?;
-    let task = tokio::spawn(wb.clone().system_task(kind, a.str("name")));
+    let work = wb.clone().system_task(kind, a.str("name"));
+    // The load goes on in a task of its own, so it records what it sends where the caller does.
+    let task = match crate::swank::SENT.try_with(Arc::clone) {
+        Ok(sent) => tokio::spawn(crate::swank::SENT.scope(sent, work)),
+        Err(_) => tokio::spawn(work),
+    };
     let (outcome, output) = watch(&wb, &c, task).await;
     let shown = if output.is_empty() { String::new() } else { format!("\n\nOutput:\n{}", clip(&output)) };
     match outcome {
