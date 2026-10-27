@@ -546,6 +546,19 @@ test("search, replace, outline, back and forward, and the problems panel", async
   await problems.locator(".problem").first().click();
   await expect(activeLine).toContainText("undefined-thing");
   await shots(page, "08-navigation");
+  const marks = page.locator(".editor-host .cm-lintRange");
+  await expect(marks.first()).toBeVisible();
+  await page.getByTitle("Clear Problems").click();
+  await expect(page.locator(".bottom-body"), "the trash clears the Problems tab").toContainText("No compiler notes");
+  await expect(page.locator(".panel-tab", { hasText: "Problems" }).locator(".count-badge")).toHaveCount(0);
+  await expect(marks, "and the marks in the editor").toHaveCount(0);
+  await expect(page.getByTitle("Clear Problems")).toBeDisabled();
+  await page.locator(".panel-tab", { hasText: "Output" }).click();
+  await expect(page.getByTestId("output")).toContainText("load zen-nav");
+  await page.getByTitle("Clear Output").click();
+  await expect(page.getByTestId("output"), "on Output it clears finished builds").toHaveText("Builds and dependency installs stream here.");
+  await page.locator(".panel-tab", { hasText: "REPL" }).click();
+  await expect(page.getByTitle("Clear REPL (⌘K or ⌃L)")).toBeEnabled();
 });
 
 test("trace calls, step through macros, disassemble and profile", async ({ page }) => {
@@ -572,6 +585,9 @@ test("trace calls, step through macros, disassemble and profile", async ({ page 
   await shots(page, "15-trace");
   await trace.locator(".trace-call .value", { hasText: '"world"' }).click();
   await expect(page.getByTestId("inspector-title")).toContainText("SIMPLE-ARRAY CHARACTER (5)");
+  await page.getByTitle("Clear Trace").click();
+  await expect(trace.locator(".trace-call"), "the trash clears recorded calls").toHaveCount(0);
+  await expect(trace.locator(".chip"), "and keeps what is traced").toHaveText("GREET");
   await trace.getByTitle("Stop tracing GREET").click();
   await expect(trace).toContainText("Nothing traced");
 
@@ -606,6 +622,9 @@ test("trace calls, step through macros, disassemble and profile", async ({ page 
   await greetRow.click();
   await expect(profile.locator(".profile-detail")).toContainText("Calls");
   await shots(page, "17-profile");
+  await page.getByTitle("Clear Profile").click();
+  await expect(profile, "the trash clears the profile").toContainText("No profile yet");
+  await expect(profile.locator(".profile-table")).toHaveCount(0);
 });
 
 test("test results as a tree, jump to a test, rerun what failed", async ({ page }) => {
@@ -660,6 +679,9 @@ test("test results as a tree, jump to a test, rerun what failed", async ({ page 
   await expect(tests.locator(".summary")).toContainText("1 passed");
   await expect(tests.locator(".summary")).not.toContainText("failed");
   await expect(tests.locator(".test-row .name")).toHaveText(["ALL", "GREETS-PLAINLY"]);
+  await page.getByTitle("Clear Test Results").click();
+  await expect(tests, "the trash clears the results").toContainText("No test run yet");
+  await expect(tests.locator(".test-row")).toHaveCount(0);
 });
 
 test("history search, a second REPL while the first is busy, and a long transcript", async ({ page }) => {

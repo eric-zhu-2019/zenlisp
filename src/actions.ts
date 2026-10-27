@@ -178,6 +178,19 @@ export function clearRepl() {
   else set({ transcript: [] });
 }
 
+export const clearProblems = () => set({ notes: {} });
+
+/** Forgets finished builds; one still running keeps streaming. */
+export const clearOutput = () =>
+  set((s) => {
+    const tasks = Object.fromEntries(Object.entries(s.tasks).filter(([, t]) => t.running));
+    return { tasks, activeTask: s.activeTask && tasks[s.activeTask] ? s.activeTask : null };
+  });
+
+export const clearTests = () => set({ tests: null });
+
+export const clearProfile = () => set({ profile: null });
+
 export function closeRepl(replId: number) {
   const repl = get().repls.find((r) => r.id === replId);
   set((s) => ({ repls: s.repls.filter((r) => r.id !== replId), activeRepl: s.activeRepl === replId ? null : s.activeRepl }));

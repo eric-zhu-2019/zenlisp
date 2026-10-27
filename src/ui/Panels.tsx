@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import * as actions from "../actions";
-import { activeDebugger, set, useStore } from "../store";
+import { activeDebugger, set, useStore, type State } from "../store";
 import { Chat } from "./Chat";
 import { DebuggerPanel } from "./Debugger";
 import { DocsPanel } from "./Docs";
@@ -165,6 +165,19 @@ export function BottomPanel() {
   const testing = useStore((s) => s.testing !== null);
   const profiling = useStore((s) => s.profiling);
   const ready = useStore((s) => s.status.session.state === "ready");
+  const traceCalls = useStore((s) => s.traces.total);
+  const profiled = useStore((s) => s.profile !== null);
+  const tested = useStore((s) => s.tests !== null);
+  const shownTask = useStore((s) => (s.activeTask ? s.tasks[s.activeTask] : undefined));
+  const clears: Record<State["bottom"], { title: string; can: boolean; run: () => unknown }> = {
+    repl: { title: "Clear REPL (⌘K or ⌃L)", can: true, run: actions.clearRepl },
+    problems: { title: "Clear Problems", can: problemCount > 0, run: actions.clearProblems },
+    output: { title: "Clear Output", can: !!shownTask && !shownTask.running, run: actions.clearOutput },
+    tests: { title: "Clear Test Results", can: tested && !testing, run: actions.clearTests },
+    trace: { title: "Clear Trace", can: traceCalls > 0, run: actions.clearTraces },
+    profile: { title: "Clear Profile", can: profiled && !profiling, run: actions.clearProfile },
+  };
+  const clear = clears[bottom];
 
   return (
     <div className="bottom">
@@ -202,7 +215,7 @@ export function BottomPanel() {
             <Icon name="bug" size={12} />
           </button>
         )}
-        <button className="icon-btn" title="Clear REPL (⌘K or ⌃L)" onClick={actions.clearRepl}>
+        <button className="icon-btn" title={clear.title} disabled={!clear.can} onClick={clear.run}>
           <Icon name="trash" size={12} />
         </button>
       </div>
