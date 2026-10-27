@@ -218,6 +218,55 @@ go to definition opens, are read-only and marked with a lock.
 same `.gitignore` rules as ripgrep. The **Problems** panel lists compiler
 notes from every file.
 
+## Architecture
+
+```mermaid
+flowchart TB
+  subgraph app["ZenLisp.app"]
+    direction TB
+    subgraph ui["Web view, in src/"]
+      direction LR
+      editor["Editor<br/>CodeMirror 6, parinfer,<br/>Vim and Emacs keys"]
+      panels["REPL, debugger, inspector,<br/>Problems, Tests, Trace, Profile"]
+      chat["Assistant chat"]
+      store["store.ts<br/>React state for the UI"]
+      editor & panels & chat <--> store
+    end
+    subgraph core["zenlisp-core, in Rust"]
+      direction TB
+      wb["Workbench<br/>requests in, events out"]
+      local["Files, git, search,<br/>HyperSpec"]
+      assistant["Assistant<br/>Claude or OpenAI"]
+      mcp["MCP server<br/>127.0.0.1, with a token"]
+      tools["Tools<br/>eval, compile, tests,<br/>debugger, files"]
+      session["Session<br/>starts SBCL, speaks Swank"]
+      wb --> local & assistant & session
+      assistant --> tools
+      mcp --> tools
+      tools --> session
+    end
+    store <-- "Tauri rpc and app-event" --> wb
+  end
+  apis["Anthropic and OpenAI APIs"]
+  agents["Claude Code and<br/>other MCP clients"]
+  sbcl["SBCL image<br/>Swank, resources/lisp,<br/>your project and plugins"]
+  dev["zenlisp-dev<br/>WebSocket bridge for a<br/>browser and the e2e tests"]
+  assistant <-- "HTTPS, streamed" --> apis
+  agents --> mcp
+  session <-- "Swank over a local socket" --> sbcl
+  dev -.-> wb
+```
+
+The UI never talks to Lisp itself. It sends typed requests to the Workbench
+in Rust and renders the events that come back; `src/protocol` holds the
+TypeScript types generated from the Rust ones. The Workbench owns one SBCL
+process and speaks Swank to it, the protocol SLIME uses. ZenLisp's own Lisp
+code in `resources/lisp` loads into that image beside Swank, and so do your
+project and your plugins. The assistant and outside agents reach the image
+through the same tools, so what they evaluate is what you see in the REPL. In
+development, `zenlisp-dev` serves the same Workbench over a WebSocket, so the
+UI runs in a browser and the end-to-end tests drive it there.
+
 ## Develop
 
 `scripts/verify.sh` runs every check: the Rust tests against a real SBCL, the
