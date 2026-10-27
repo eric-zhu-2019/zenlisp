@@ -1,0 +1,44 @@
+name: Release
+
+# Runs only for a pushed version tag: checks everything, builds the app and
+# publishes it as that tag's GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 26.12.1
+          cache: npm
+      - name: Tag matches the app version
+        run: |
+          version=$(node -p 'require("./src-tauri/tauri.conf.json").version')
+          [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "tag $GITHUB_REF_NAME, app version $version"; exit 1; }
+      - name: Rust
+        run: rustup toolchain install 1.96.1 --profile minimal && rustup default 1.96.1
+      - name: SBCL and Quicklisp
+        run: |
+          brew install sbcl
+          curl -fsSLO https://beta.quicklisp.org/quicklisp.lisp
+          sbcl --non-interactive --load quicklisp.lisp --eval '(quicklisp-quickstart:install)'
+      - run: npm ci
+      - run: npx playwright install webkit
+      - run: scripts/verify.sh
+      - name: Build
+        run: npx tauri build --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" target/release/bundle/dmg/*.dmg \
+            --title "ZParen ${GITHUB_REF_NAME#v}" --generate-notes \
+            --notes "This build is ad hoc signed and not notarized. After the first open is refused, click Open Anyway in System Settings ▸ Privacy & Security."
