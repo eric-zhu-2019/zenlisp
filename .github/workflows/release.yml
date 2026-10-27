@@ -1,21 +1,22 @@
 name: Release
 
-# Runs only for a pushed version tag: checks everything, builds the app and
-# publishes it as that tag's GitHub release.
+# Runs only for a pushed version tag. The build job checks everything and
+# builds the app without any secret. The sign job runs only after approval in
+# the release environment, and gives the Developer ID certificate to Apple's
+# tools and scripts/sign.sh alone: no npm or cargo code runs next to it.
 on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
-
 jobs:
-  release:
+  build:
     runs-on: macos-15
     timeout-minutes: 90
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26.12.1
           cache: npm
@@ -34,11 +35,59 @@ jobs:
       - run: npx playwright install webkit
       - run: scripts/verify.sh
       - name: Build
-        run: npx tauri build --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+        run: |
+          npx tauri build --bundles app --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+          tar -czf ZParen.app.tgz -C target/release/bundle/macos ZParen.app
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: app
+          path: ZParen.app.tgz
+          retention-days: 1
+
+  sign:
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: app
+      - name: Certificate into a keychain of its own
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/sign.keychain-db"
+          pass=$(uuidgen)
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 1800 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          # The certificate's issuer, which an exported .p12 leaves out.
+          curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDCA.cer -o "$RUNNER_TEMP/ca.cer"
+          security import "$RUNNER_TEMP/ca.cer" -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          id=$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application/ {print $2; exit}')
+          [ -n "$id" ] || { echo "no Developer ID Application identity in MACOS_CERTIFICATE"; exit 1; }
+          echo "ZPAREN_SIGN_IDENTITY=$id" >> "$GITHUB_ENV"
+      - name: Sign
+        run: |
+          tar -xzf ZParen.app.tgz
+          scripts/sign.sh ZParen.app "ZParen_${GITHUB_REF_NAME#v}_aarch64.dmg"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" target/release/bundle/dmg/*.dmg \
+          gh release create "$GITHUB_REF_NAME" ZParen_*_aarch64.dmg \
             --title "ZParen ${GITHUB_REF_NAME#v}" --generate-notes \
-            --notes "This build is ad hoc signed and not notarized. After the first open is refused, click Open Anyway in System Settings ▸ Privacy & Security."
+            --notes "Signed with a Developer ID, not yet notarized. After macOS refuses the first open, click Open Anyway in System Settings ▸ Privacy & Security."
+      - name: Remove the keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/sign.keychain-db" || true
