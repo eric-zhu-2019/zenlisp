@@ -78,7 +78,11 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" > /dev/null
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           id=$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application/ {print $2; exit}')
-          [ -n "$id" ] || { echo "no Developer ID Application identity in MACOS_CERTIFICATE"; exit 1; }
+          if [ -z "$id" ]; then
+            echo "no valid Developer ID Application identity in MACOS_CERTIFICATE. It holds:"
+            security find-identity "$keychain"
+            exit 1
+          fi
           echo "ZPAREN_SIGN_IDENTITY=$id" >> "$GITHUB_ENV"
       - name: Sign
         run: |
