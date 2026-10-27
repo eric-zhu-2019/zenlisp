@@ -639,6 +639,8 @@ test("test results as a tree, jump to a test, rerun what failed", async ({ page 
 `,
   );
 
+  // ⌘U tests the first system listed, so the list must be read first.
+  await expect(page.locator(".system").first()).toBeVisible();
   await page.keyboard.press("Meta+u");
   const tests = page.getByTestId("tests");
   await expect(tests.locator(".summary")).toContainText("1 passed1 failed", { timeout: 60_000 });
@@ -1665,6 +1667,12 @@ test("a plugin adds a command with a key, a setting, a save hook and a REPL comm
     await page.keyboard.press("Control+c");
     await page.keyboard.press("t");
     await expect(editor.locator(".cm-line").first(), "C-c t inserts the date and time").toHaveText(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/);
+
+    await page.keyboard.press("Meta+Shift+/");
+    const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+    const rows = help.locator("section", { has: page.locator("th", { hasText: /^Plugins$/ }) }).locator("tbody tr");
+    await expect(rows, "the shortcuts screen lists the plugins' keys").toHaveText([/Wrap Form.*from demo.*⌥⌘J/, /Insert Date and Time.*from insert-datetime.*C-c t/]);
+    await page.keyboard.press("Escape");
 
     await page.locator(".panel-tab", { hasText: "REPL" }).click();
     await replEval(page, ",hello");

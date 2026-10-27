@@ -33,7 +33,7 @@ import { useSettings } from "./settings";
 import { activeDebugger, get, set } from "./store";
 import { toggleBreakpoint } from "./editor/breakpoints";
 
-export type Category = "Lisp" | "Navigation" | "Editing" | "Structure" | "Project" | "Window" | "REPL" | "Debugger" | "Tools";
+export type Category = "Lisp" | "Navigation" | "Editing" | "Structure" | "Project" | "Window" | "REPL" | "Debugger" | "Tools" | "Plugins";
 
 type Base = {
   id: string;
@@ -288,16 +288,25 @@ export class EmacsChords {
   }
 }
 
-/** Plugin commands with an Emacs key sequence, as bindings the chords follow. */
-function pluginChords(): Binding[] {
-  return (usePlugins.getState().manifest?.commands ?? [])
-    .filter((c) => c.emacs)
-    .map((c) => ({ id: `plugin:${c.id}`, label: c.title, category: "Tools", emacs: c.emacs!, scope: "window", run: () => void runPluginCommand(c.id) }));
+/** Plugin commands with keys, as bindings: the Emacs chords follow them and help lists them. */
+export function pluginBindings(commands = usePlugins.getState().manifest?.commands ?? []): Binding[] {
+  return commands
+    .filter((c) => c.key || c.emacs)
+    .map((c) => ({
+      id: `plugin:${c.id}`,
+      label: c.title,
+      category: "Plugins",
+      key: c.key ?? undefined,
+      emacs: c.emacs ?? undefined,
+      note: `from ${c.plugin}`,
+      scope: "window",
+      run: () => void runPluginCommand(c.id),
+    }));
 }
 
 /** Emacs key sequences in the main editor, caught before CodeMirror and Vim. */
 export function emacsKeyHandler() {
-  const chords = new EmacsChords(() => [...bindings, ...pluginChords()]);
+  const chords = new EmacsChords(() => [...bindings, ...pluginBindings()]);
   return (e: KeyboardEvent) => {
     if (!useSettings.getState().emacs) return;
     const view = activeEditor.view;
