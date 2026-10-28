@@ -13,6 +13,8 @@ export type Settings = {
   compileOnChange: boolean;
   /** A project's next session loads again the systems its last session loaded. */
   reloadSystems: boolean;
+  /** After a load, a missing or old startup image is saved again in the background. */
+  autoImage: boolean;
   fontSize: number;
   /** Long lines wrap at the editor's edge instead of scrolling sideways. */
   wordWrap: boolean;
@@ -35,7 +37,7 @@ export const SIDEBAR_WIDTH = 240;
 export const RIGHT_WIDTH = 360;
 
 function load(): Settings {
-  const defaults: Settings = { vim: true, emacs: true, parinfer: true, liveCheck: true, compileOnSave: true, compileOnChange: true, reloadSystems: true, fontSize: 13, wordWrap: false, editorFont: "", uiFont: "", theme: "system", lightTheme: "zparen-light", darkTheme: "zparen-dark", sidebarWidth: SIDEBAR_WIDTH, rightWidth: RIGHT_WIDTH };
+  const defaults: Settings = { vim: true, emacs: true, parinfer: true, liveCheck: true, compileOnSave: true, compileOnChange: true, reloadSystems: true, autoImage: false, fontSize: 13, wordWrap: false, editorFont: "", uiFont: "", theme: "system", lightTheme: "zparen-light", darkTheme: "zparen-dark", sidebarWidth: SIDEBAR_WIDTH, rightWidth: RIGHT_WIDTH };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") };
   } catch {

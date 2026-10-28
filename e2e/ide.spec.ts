@@ -1517,6 +1517,36 @@ test("Run calls a system's entry point in the REPL", async ({ page }) => {
   await expect(page.locator(".repl-buffer"), "a new Lisp loads what Run loaded").toContainText("Loading zen-run, as in the last session", { timeout: 60_000 });
 });
 
+test("the title bar says when a project has no startup image or an old one, and Settings keeps it saved", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-image");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const chip = page.getByTestId("image-chip");
+  await expect(chip, "a new project has no image").toHaveText("No image");
+
+  await page.keyboard.press("Meta+,");
+  const settings = page.getByTestId("settings");
+  await settings.getByRole("button", { name: "Lisp", exact: true }).click();
+  await settings.getByRole("switch", { name: "Keep a startup image up to date" }).check();
+  await settings.getByRole("button", { name: "Done" }).click();
+  await page.locator(".system", { has: page.locator(".name", { hasText: /^zen-image$/ }) }).getByRole("button", { name: "Load" }).click();
+  await expect(page.getByText("load zen-image: done")).toBeVisible({ timeout: 60_000 });
+  await expect(chip, "a load saves the missing image, and a fresh one needs no notice").toHaveCount(0, { timeout: 60_000 });
+
+  const main = join(parent, "zen-image", "src", "main.lisp");
+  writeFileSync(main, readFileSync(main, "utf8") + "\n(defun later () 2)\n");
+  await expect(chip, "a changed file makes it old").toHaveText("Image old", { timeout: 15_000 });
+  await expect(chip).toHaveAttribute("title", /main\.lisp changed since it was saved/);
+  await chip.click();
+  await expect(chip, "a click saves it again").toHaveCount(0, { timeout: 60_000 });
+  await page.locator(".status-pill").click();
+  await expect(page.locator(".status-pill"), "Lisp starts from it").toContainText("SBCL · image", { timeout: 60_000 });
+});
+
 test("the sidebar and the right panel resize by their edges, and keep their widths", async ({ page }) => {
   const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);

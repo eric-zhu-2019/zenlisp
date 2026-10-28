@@ -10,6 +10,7 @@ import type { Profile } from "./protocol/Profile";
 import type { TestRun } from "./protocol/TestRun";
 import type { TraceEntry } from "./protocol/TraceEntry";
 import type { Status } from "./protocol/Status";
+import type { ImageInfo } from "./protocol/ImageInfo";
 import type { Span } from "./protocol/Span";
 import type { SystemInfo } from "./protocol/SystemInfo";
 import type { Dependency } from "./protocol/Dependency";
@@ -89,6 +90,8 @@ export interface State {
   openPresentation: number | null;
   package: string;
   packages: string[];
+  /** The open project's startup image: null when it has none, undefined until known. */
+  image: ImageInfo | null | undefined;
   debuggers: Record<string, Debugger[]>;
   /** The thread that entered a debugger most recently. */
   lastDebugThread: string | null;
@@ -176,6 +179,7 @@ export const useStore = create<State>(() => ({
   openPresentation: null,
   package: "COMMON-LISP-USER",
   packages: [],
+  image: undefined,
   debuggers: {},
   lastDebugThread: null,
   debugSpot: null,

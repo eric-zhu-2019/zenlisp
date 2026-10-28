@@ -29,6 +29,7 @@ export function TitleBar() {
         <span className={`dot ${state === "exited" ? "failed" : state}`} />
         {state === "ready" ? (status.session.image ? "SBCL · image" : "SBCL") : state === "starting" ? "Starting…" : state === "failed" ? "Failed" : state === "exited" ? "Exited" : "Stopped"}
       </button>
+      {status.project && <ImageChip />}
       <span className="spacer" data-tauri-drag-region />
       {state === "ready" && (
         <select className="select" value={pkg} title="Current package" onChange={(e) => actions.setPackage(e.target.value)}>
@@ -58,6 +59,23 @@ export function TitleBar() {
         <Icon name="sparkle" />
       </button>
     </header>
+  );
+}
+
+/** Says when the project has no startup image or an old one, and saves one on a click. */
+function ImageChip() {
+  const image = useStore((s) => s.image);
+  const saving = useStore((s) => s.tasks["save startup image"]?.running ?? false);
+  const systems = useStore((s) => s.systems);
+  if (saving) return <span className="image-chip" data-testid="image-chip">Saving image…</span>;
+  if (image === undefined || (image && !image.stale) || systems.length === 0) return null;
+  const why = image
+    ? `${image.stale} ${image.used ? "Lisp still starts from it, then compiles what changed." : "Lisp starts without it."} Click to save it again.`
+    : "Lisp starts without the project's systems and loads them after it starts. Click to save an image with them loaded.";
+  return (
+    <button className={`image-chip ${image ? "old" : ""}`} data-testid="image-chip" title={why} onClick={() => void actions.saveImage(actions.imageSystems())}>
+      {image ? "Image old" : "No image"}
+    </button>
   );
 }
 

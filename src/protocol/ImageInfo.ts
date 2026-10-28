@@ -7,4 +7,13 @@ export type ImageInfo = { path: string,
 /**
  * Seconds since the Unix epoch.
  */
-saved: number, megabytes: number, };
+saved: number, megabytes: number, 
+/**
+ * Why the image no longer matches the project or ZParen, if it does not.
+ */
+stale: string | null, 
+/**
+ * Whether Lisp starts from it. An image built on another base core holds
+ * that core's Swank and ZParen code, so Lisp starts from the base core instead.
+ */
+used: boolean, };

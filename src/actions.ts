@@ -213,6 +213,7 @@ export async function openProject(root: string) {
     offerTour();
     await Promise.all([refreshSystems(), refreshStatus(), refreshPackages()]);
     void refreshGit();
+    void refreshImage();
   }
 }
 
@@ -257,7 +258,7 @@ export async function newProject(parent: string, name: string, deps: NewDeps = "
 export async function closeProject() {
   if (!(await leaveProject())) return;
   await request({ type: "closeProject" });
-  set({ tabs: [], ...emptyPanes(), notes: {}, systems: [], transcript: [], inspector: null, debuggers: {}, right: null });
+  set({ tabs: [], ...emptyPanes(), notes: {}, systems: [], transcript: [], inspector: null, debuggers: {}, right: null, image: undefined });
 }
 
 export async function refreshSystems() {
@@ -454,9 +455,53 @@ export async function updateDeps() {
   }
 }
 
-export async function saveImage(systems: string[]) {
-  set({ bottom: "output" });
+/** The project's main systems: a startup image leaves its test systems out. */
+export const imageSystems = () => get().systems.map((s) => s.name).filter((n) => !/\/tests?$|-tests?$/.test(n));
+
+export async function refreshImage() {
+  if (!get().status.project) return set({ image: undefined });
+  const r = await backend.request({ type: "image" }).catch(() => null);
+  if (r?.type === "image") set({ image: r.image });
+}
+
+/** Saves the startup image. `quiet` leaves the bottom panel as it is, for a save nobody clicked. */
+export async function saveImage(systems: string[], quiet = false) {
+  if (!quiet) set({ bottom: "output" });
   await runTask("save startup image", { type: "saveImage", systems });
+}
+
+export async function cleanImages() {
+  await request({ type: "cleanImages" });
+  await refreshImage();
+}
+
+let autoTimer: ReturnType<typeof setTimeout> | undefined;
+/** A failed automatic save waits for a file to change before it is tried again. */
+let autoFailed = false;
+let autoSaving = false;
+
+/** After loads settle, saves the startup image if it is missing or old. */
+export function autoSaveImageSoon() {
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(async () => {
+    if (autoFailed || autoSaving || get().tasks["save startup image"]?.running) return;
+    await refreshImage();
+    const image = get().image;
+    const systems = imageSystems();
+    if (image === undefined || (image && !image.stale) || systems.length === 0) return;
+    autoSaving = true;
+    await saveImage(systems, true).catch(() => {});
+  }, 3000);
+}
+
+/** Notes how an automatic save ended; any other save leaves the retry rule alone. */
+export function autoImageFinished(ok: boolean) {
+  if (autoSaving) autoFailed = !ok;
+  autoSaving = false;
+}
+
+export function filesChangedForImage() {
+  autoFailed = false;
 }
 
 export async function installDeps() {

@@ -4,7 +4,7 @@ import { fetchManifest, usePlugins } from "./plugins";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { backend, inTauri } from "./backend";
-import { ask, checkSoon, closeProject, loadSystem, compileOutsideChanges, requestOpenProject, copyDiagnostics, refreshGit, resyncBreakpoints, showFrame, syncWithDisk, trackLoadedFiles } from "./actions";
+import { ask, autoImageFinished, autoSaveImageSoon, checkSoon, closeProject, filesChangedForImage, loadSystem, refreshImage, compileOutsideChanges, requestOpenProject, copyDiagnostics, refreshGit, resyncBreakpoints, showFrame, syncWithDisk, trackLoadedFiles } from "./actions";
 import { appendTranscript, dispatchEvent, get, set } from "./store";
 import { markTour, openTour } from "./tour";
 import { initParinfer } from "./editor/parinfer";
@@ -17,9 +17,13 @@ await initParinfer();
 guardWindowClose();
 /** The session state last reported, so a reload happens once per Lisp that becomes ready. */
 let lastState: string | null = null;
+let imageTimer: ReturnType<typeof setTimeout> | undefined;
 backend.onEvent((e) => {
   dispatchEvent(e);
   if (e.type === "filesChanged") {
+    filesChangedForImage();
+    clearTimeout(imageTimer);
+    imageTimer = setTimeout(() => void refreshImage(), 1000);
     syncWithDisk(e.paths);
     void compileOutsideChanges(e.paths);
     void refreshGit();
@@ -27,11 +31,21 @@ backend.onEvent((e) => {
   // Loading a system compiles its files afresh.
   if (e.type === "taskFinished" || (e.type === "status" && e.session.state === "ready")) resyncBreakpoints();
   const root = get().status.project?.root;
-  if (root && e.type === "taskFinished" && e.ok && e.task.startsWith("load ")) rememberLoaded(root, e.task.slice(5));
+  if (root && e.type === "taskFinished" && e.ok && e.task.startsWith("load ")) {
+    rememberLoaded(root, e.task.slice(5));
+    if (useSettings.getState().autoImage) autoSaveImageSoon();
+  }
+  if (e.type === "taskFinished" && e.task === "save startup image") {
+    autoImageFinished(e.ok);
+    void refreshImage();
+  }
   // A fresh Lisp has nothing of the project; load again what the last session loaded.
   const becameReady = e.type === "status" && e.session.state === "ready" && lastState !== "ready";
   if (e.type === "status") lastState = e.session.state;
-  if (becameReady) void fetchManifest();
+  if (becameReady) {
+    void fetchManifest();
+    void refreshImage();
+  }
   else if (e.type === "status" && e.session.state !== "ready") usePlugins.setState({ manifest: null });
   if (root && becameReady && useSettings.getState().reloadSystems) {
     const systems = loadedSystems(root).filter((name) => get().systems.some((s) => s.name === name) || get().systems.length === 0);

@@ -5,7 +5,6 @@ import type { AssistantConfig } from "../protocol/AssistantConfig";
 import type { AssistantStatus } from "../protocol/AssistantStatus";
 import type { Provider } from "../protocol/Provider";
 import type { ProviderStatus } from "../protocol/ProviderStatus";
-import type { ImageInfo } from "../protocol/ImageInfo";
 import type { LispOptions } from "../protocol/LispOptions";
 import { type Settings as EditorSettings, updateSettings, useSettings } from "../settings";
 import { set, useStore } from "../store";
@@ -373,40 +372,51 @@ function Lisp() {
   );
 }
 
-/** The project's main systems: a startup image leaves its test systems out. */
-const imageSystems = () => useStore.getState().systems.map((s) => s.name).filter((n) => !/\/tests?$|-tests?$/.test(n));
-
 function StartupImage() {
   const project = useStore((s) => s.status.project);
-  const tasks = useStore((s) => s.tasks);
-  const saving = tasks["save startup image"]?.running ?? false;
-  const [image, setImage] = useState<ImageInfo | null | undefined>(undefined);
-  const refresh = () => actions.request({ type: "image" }).then((r) => r.type === "image" && setImage(r.image)).catch(() => setImage(null));
+  const saving = useStore((s) => s.tasks["save startup image"]?.running ?? false);
+  const image = useStore((s) => s.image);
+  const auto = useSettings((s) => s.autoImage);
   useEffect(() => {
-    if (project && !saving) void refresh();
+    if (project && !saving) void actions.refreshImage();
   }, [project, saving]);
-  if (!project) return null;
-  const systems = imageSystems();
+  useStore((s) => s.systems);
+  const systems = actions.imageSystems();
+  const clean = () =>
+    actions.ask("Delete all startup images?", "Every project's image and ZParen's cached base cores are deleted. The next start builds a fresh base core.", [
+      { label: "Delete All", kind: "danger", run: () => void actions.cleanImages() },
+      { label: "Cancel", run: () => {} },
+    ]);
   return (
-    <Row
-      label="Startup image"
-      hint={
-        image
-          ? `Saved ${new Date(image.saved * 1000).toLocaleString()}, ${image.megabytes} MB. Lisp starts from it with the project's systems already loaded.`
-          : `Saves ${systems.join(", ") || "the project"} loaded into an image, so Lisp starts with them. It is built in a separate SBCL; the running Lisp is not touched.`
-      }
-    >
-      <div className="path-input">
-        <button className="btn" disabled={saving || systems.length === 0} onClick={() => actions.saveImage(systems)}>
-          {saving ? "Saving…" : image ? "Save again" : "Save an image"}
+    <>
+      {project && (
+        <Row
+          label="Startup image"
+          hint={
+            image
+              ? `Saved ${new Date(image.saved * 1000).toLocaleString()}, ${image.megabytes} MB. ${image.stale ? `${image.stale} ${image.used ? "Lisp still starts from it, then compiles what changed." : "Lisp starts without it."}` : "Lisp starts from it with the project's systems already loaded."}`
+              : `Saves ${systems.join(", ") || "the project"} loaded into an image, so Lisp starts with them. It is built in a separate SBCL; the running Lisp is not touched.`
+          }
+        >
+          <div className="path-input">
+            <button className="btn" disabled={saving || systems.length === 0} onClick={() => actions.saveImage(systems)}>
+              {saving ? "Saving…" : image ? "Save again" : "Save an image"}
+            </button>
+            {image && (
+              <button className="btn danger" disabled={saving} onClick={() => actions.request({ type: "deleteImage" }).then(actions.refreshImage)}>
+                Delete
+              </button>
+            )}
+          </div>
+        </Row>
+      )}
+      <Row label="Keep images" hint="After a load, a missing or old startup image is saved again in a separate SBCL. Loading the project there runs its load-time code a second time.">
+        <Toggle label="Keep a startup image up to date" checked={auto} onChange={(autoImage) => updateSettings({ autoImage })} />
+        <button className="btn danger" disabled={saving} onClick={clean}>
+          Clean images
         </button>
-        {image && (
-          <button className="btn danger" disabled={saving} onClick={() => actions.request({ type: "deleteImage" }).then(refresh)}>
-            Delete
-          </button>
-        )}
-      </div>
-    </Row>
+      </Row>
+    </>
   );
 }
 

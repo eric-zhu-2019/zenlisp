@@ -360,6 +360,21 @@ textarea {
 .status-pill:hover {
   background: var(--bg-hover);
 }
+.image-chip {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+button.image-chip:hover {
+  color: var(--text-dim);
+  background: var(--bg-hover);
+}
+.image-chip.old {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+}
 .dot {
   width: 8px;
   height: 8px;

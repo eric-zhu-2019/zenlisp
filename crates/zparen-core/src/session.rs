@@ -343,22 +343,7 @@ where
 /// concurrent starts never load a half-written core.
 pub async fn ensure_core(cfg: &SessionConfig) -> Result<PathBuf, StartError> {
     let spawn_err = |source| StartError::Spawn { sbcl: cfg.sbcl.display().to_string(), source };
-    let version = cfg.sbcl_command().arg("--version").output().await.map_err(spawn_err)?;
-    let mut key = Fnv::default();
-    key.write(&version.stdout);
-    for dir in ["lisp", "swank", "swank/swank", "swank/contrib"] {
-        let mut files: Vec<_> = std::fs::read_dir(cfg.resources.join(dir))
-            .map_err(spawn_err)?
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.is_file())
-            .collect();
-        files.sort();
-        for f in files {
-            key.write(f.file_name().unwrap().as_encoded_bytes());
-            key.write(&std::fs::read(&f).map_err(spawn_err)?);
-        }
-    }
-    let core = cfg.cache_dir.join(format!("zparen-{:016x}.core", key.0));
+    let core = core_path(cfg).await?;
     if core.is_file() {
         return Ok(core);
     }
@@ -386,6 +371,27 @@ pub async fn ensure_core(cfg: &SessionConfig) -> Result<PathBuf, StartError> {
     };
     let _ = std::fs::remove_dir_all(&tmp);
     result
+}
+
+/// Where the core for this SBCL and these bundled Lisp files is cached, built or not.
+pub async fn core_path(cfg: &SessionConfig) -> Result<PathBuf, StartError> {
+    let spawn_err = |source| StartError::Spawn { sbcl: cfg.sbcl.display().to_string(), source };
+    let version = cfg.sbcl_command().arg("--version").output().await.map_err(spawn_err)?;
+    let mut key = Fnv::default();
+    key.write(&version.stdout);
+    for dir in ["lisp", "swank", "swank/swank", "swank/contrib"] {
+        let mut files: Vec<_> = std::fs::read_dir(cfg.resources.join(dir))
+            .map_err(spawn_err)?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
+            .collect();
+        files.sort();
+        for f in files {
+            key.write(f.file_name().unwrap().as_encoded_bytes());
+            key.write(&std::fs::read(&f).map_err(spawn_err)?);
+        }
+    }
+    Ok(cfg.cache_dir.join(format!("zparen-{:016x}.core", key.0)))
 }
 
 /// Deletes all but the `keep` newest cores. Each is about 40 MB, and every

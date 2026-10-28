@@ -198,6 +198,7 @@ async fn a_dying_lisp_says_why_and_a_saved_image_starts_with_the_project_loaded(
     assert!(ok, "{out}");
     let Response::Image { image: Some(info) } = wb.handle(Request::Image).await.unwrap() else { panic!("no image after saving") };
     assert!(info.megabytes > 10, "{info:?}");
+    assert_eq!((info.stale.as_deref(), info.used), (None, true), "a new image matches the project: {info:?}");
 
     wb.handle(Request::RestartSession).await.unwrap();
     status_until(&wb, |s| matches!(s, SessionState::Ready { image: true, .. })).await;
@@ -205,8 +206,44 @@ async fn a_dying_lisp_says_why_and_a_saved_image_starts_with_the_project_loaded(
     let Response::Lisp { reply: Reply::Evaluated { value, .. } } = wb.handle(Request::Lisp { op: probe }).await.unwrap() else { panic!() };
     assert_eq!(value, "T", "the project is loaded before anything is evaluated");
 
-    wb.handle(Request::DeleteImage).await.unwrap();
+    let main = parent.join("imaged-zen/src/main.lisp");
+    std::fs::write(&main, std::fs::read_to_string(&main).unwrap() + "\n(defun later () 2)\n").unwrap();
+    let Response::Image { image: Some(info) } = wb.handle(Request::Image).await.unwrap() else { panic!() };
+    assert!(info.stale.as_deref().is_some_and(|s| s.contains("main.lisp")), "a changed file makes the image old: {info:?}");
+    assert!(info.used, "Lisp still starts from it, and the reload compiles the change: {info:?}");
+
+    let manifest = PathBuf::from(&info.path).with_extension("json");
+    let other_core = std::fs::read_to_string(&manifest).unwrap().replacen("zparen-", "zparen-0", 1);
+    std::fs::write(&manifest, other_core).unwrap();
+    let Response::Image { image: Some(info) } = wb.handle(Request::Image).await.unwrap() else { panic!() };
+    assert!(info.stale.as_deref().is_some_and(|s| s.contains("another version")) && !info.used, "{info:?}");
     wb.handle(Request::RestartSession).await.unwrap();
     status_until(&wb, |s| matches!(s, SessionState::Ready { image: false, .. })).await;
+
+    wb.handle(Request::DeleteImage).await.unwrap();
+    let Response::Image { image: None } = wb.handle(Request::Image).await.unwrap() else { panic!("the image is still there") };
+    assert!(!manifest.exists(), "its record goes with it");
     wb.stop().await;
+}
+
+#[tokio::test]
+async fn clean_images_deletes_every_project_image_and_the_cached_cores() {
+    let resources = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../resources");
+    let mut cfg = SessionConfig::new(resources);
+    cfg.data_dir = tmp("clean-data");
+    cfg.cache_dir = tmp("clean-cache");
+    let images = cfg.data_dir.join("images");
+    std::fs::create_dir_all(&images).unwrap();
+    for f in ["a-1.core", "a-1.json", "b-2.core"] {
+        std::fs::write(images.join(f), "x").unwrap();
+    }
+    for f in ["zparen-1.core", "zparen-2.core", "other.txt"] {
+        std::fs::write(cfg.cache_dir.join(f), "x").unwrap();
+    }
+    let cache = cfg.cache_dir.clone();
+    let wb = Workbench::new(cfg);
+    wb.handle(Request::CleanImages).await.unwrap();
+    assert!(!images.exists(), "every project's image is gone");
+    let left: Vec<_> = std::fs::read_dir(&cache).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    assert_eq!(left, ["other.txt"], "the base cores are gone, and nothing else");
 }

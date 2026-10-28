@@ -103,6 +103,8 @@ pub enum Request {
     #[serde(rename_all = "camelCase")]
     SaveImage { systems: Vec<String> },
     DeleteImage,
+    /// Deletes every project's startup image and the cached base cores, so each is built afresh.
+    CleanImages,
     /// A file's text in the last git commit.
     #[serde(rename_all = "camelCase")]
     GitHead { path: String },
@@ -219,6 +221,20 @@ pub struct ImageInfo {
     /// Seconds since the Unix epoch.
     pub saved: u64,
     pub megabytes: u64,
+    /// Why the image no longer matches the project or ZParen, if it does not.
+    pub stale: Option<String>,
+    /// Whether Lisp starts from it. An image built on another base core holds
+    /// that core's Swank and ZParen code, so Lisp starts from the base core instead.
+    pub used: bool,
+}
+
+/// What a startup image was built from, saved beside it.
+#[derive(Debug, Serialize, Deserialize)]
+struct ImageManifest {
+    /// The base core's file name.
+    core: String,
+    /// Each project file the image holds, relative to the root, with its size and modification time in nanoseconds.
+    files: std::collections::BTreeMap<String, (u64, u128)>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, PartialEq)]
@@ -400,7 +416,9 @@ impl Workbench {
         if let Some(p) = &project {
             cfg.cwd = PathBuf::from(&p.root);
             let image = self.image_path(p);
-            if image.is_file() {
+            if let Ok(core) = crate::session::core_path(&cfg).await
+                && image_info(&image, &core, Path::new(&p.root)).is_some_and(|i| i.used)
+            {
                 cfg.core = Some(image);
             }
         }
@@ -688,13 +706,31 @@ impl Workbench {
             }
             Request::Image => {
                 let p = self.project().await?;
-                Ok(Response::Image { image: image_info(&self.image_path(&p)) })
+                let core = crate::session::core_path(&self.configured()).await.map_err(|e| e.to_string())?;
+                Ok(Response::Image { image: image_info(&self.image_path(&p), &core, Path::new(&p.root)) })
             }
             Request::DeleteImage => {
                 let p = self.project().await?;
                 let path = self.image_path(&p);
                 if path.is_file() {
                     std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+                }
+                let _ = std::fs::remove_file(path.with_extension("json"));
+                Ok(Response::Image { image: None })
+            }
+            Request::CleanImages => {
+                let images = self.config.data_dir.join("images");
+                if images.is_dir() {
+                    std::fs::remove_dir_all(&images).map_err(|e| e.to_string())?;
+                }
+                // A running SBCL has already read its core, so deleting it is safe.
+                let cache = &self.configured().cache_dir;
+                for entry in std::fs::read_dir(cache).into_iter().flatten().flatten() {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    if name.starts_with("zparen-") && name.ends_with(".core") {
+                        std::fs::remove_file(entry.path()).map_err(|e| e.to_string())?;
+                    }
                 }
                 Ok(Response::Image { image: None })
             }
@@ -705,6 +741,8 @@ impl Workbench {
                 let path = self.image_path(&p);
                 std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
                 let tmp = path.with_extension("tmp");
+                let listed = path.with_extension("files");
+                let started = std::time::SystemTime::now();
                 let mut cmd = cfg.sbcl_command();
                 cmd.arg("--core").arg(&core).args(["--noinform", "--non-interactive", "--no-userinit"]);
                 for form in p.setup_forms() {
@@ -713,14 +751,38 @@ impl Workbench {
                 for s in &systems {
                     cmd.arg("--eval").arg(Sexp::list([Sexp::sym("zparen:load-system"), Sexp::str(s)]).to_string());
                 }
+                let list = Sexp::list([
+                    Sexp::sym("with-open-file"),
+                    Sexp::list([Sexp::sym("s"), Sexp::str(&listed.display().to_string()), Sexp::kw("direction"), Sexp::kw("output"), Sexp::kw("if-exists"), Sexp::kw("supersede")]),
+                    Sexp::list([Sexp::sym("write-string"), Sexp::list([Sexp::sym("zparen::loaded-source-files"), Sexp::str(&p.root)]), Sexp::sym("s")]),
+                ]);
+                cmd.arg("--eval").arg(list.to_string());
                 let save = Sexp::list([Sexp::sym("sb-ext:save-lisp-and-die"), Sexp::str(&tmp.display().to_string())]);
                 cmd.arg("--eval").arg(save.to_string());
+                let core_name = core.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                let root = PathBuf::from(&p.root);
                 // The image is renamed into place only once it is complete.
                 self.process_task_then("save startup image".into(), cmd, &p.root, move |ok| {
-                    if ok {
-                        let _ = std::fs::rename(&tmp, &path);
-                    } else {
+                    let loaded = std::fs::read_to_string(&listed).unwrap_or_default();
+                    let _ = std::fs::remove_file(&listed);
+                    if !ok {
                         let _ = std::fs::remove_file(&tmp);
+                        return;
+                    }
+                    let files = loaded
+                        .lines()
+                        .filter(|l| !l.is_empty())
+                        .map(str::to_string)
+                        .chain(root_files(&root))
+                        .map(|f| {
+                            // A file changed during the build may not be what the image holds.
+                            let fp = fingerprint(&root.join(&f)).filter(|&(_, m)| m <= nanos(started)).unwrap_or_default();
+                            (f, fp)
+                        })
+                        .collect();
+                    let manifest = ImageManifest { core: core_name, files };
+                    if std::fs::rename(&tmp, &path).is_ok() {
+                        let _ = std::fs::write(path.with_extension("json"), serde_json::to_string(&manifest).unwrap_or_default());
                     }
                 });
                 Ok(Response::Ok)
@@ -977,8 +1039,49 @@ fn load_options(data_dir: &Path) -> LispOptions {
     std::fs::read_to_string(data_dir.join(OPTIONS_FILE)).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
 }
 
-fn image_info(path: &Path) -> Option<ImageInfo> {
+/// The image at `path`, and whether it still matches the base core `core` and the project at `root`.
+fn image_info(path: &Path, core: &Path, root: &Path) -> Option<ImageInfo> {
     let meta = std::fs::metadata(path).ok()?;
     let saved = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
-    Some(ImageInfo { path: path.display().to_string(), saved, megabytes: meta.len() / 1_000_000 })
+    let manifest: Option<ImageManifest> = std::fs::read_to_string(path.with_extension("json")).ok().and_then(|s| serde_json::from_str(&s).ok());
+    let (stale, used) = match manifest {
+        None => (Some("It was saved by an earlier ZParen, which kept no record of what it holds.".to_string()), false),
+        Some(m) if Some(m.core.as_str()) != core.file_name().and_then(|n| n.to_str()) => {
+            (Some("It was built on another version of ZParen or SBCL.".to_string()), false)
+        }
+        Some(m) => {
+            let mut changed: Vec<String> = m.files.iter().filter(|(f, fp)| fingerprint(&root.join(f)) != Some(**fp)).map(|(f, _)| f.clone()).collect();
+            changed.extend(root_files(root).filter(|f| !m.files.contains_key(f)));
+            let stale = match changed.len() {
+                0 => None,
+                1 => Some(format!("{} changed since it was saved.", changed[0])),
+                n => Some(format!("{} and {} more files changed since it was saved.", changed[0], n - 1)),
+            };
+            (stale, true)
+        }
+    };
+    Some(ImageInfo { path: path.display().to_string(), saved, megabytes: meta.len() / 1_000_000, stale, used })
+}
+
+/// The files at a project's root that decide what loads: its .asd files and dependency lists.
+fn root_files(root: &Path) -> impl Iterator<Item = String> {
+    let mut names: Vec<String> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.ends_with(".asd") || matches!(n.as_str(), "qlfile" | "qlfile.lock" | "ocicl.csv"))
+        .collect();
+    names.sort();
+    names.into_iter()
+}
+
+/// A file's size and modification time, which change when it is written.
+fn fingerprint(path: &Path) -> Option<(u64, u128)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), nanos(meta.modified().ok()?)))
+}
+
+fn nanos(t: std::time::SystemTime) -> u128 {
+    t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default()
 }
