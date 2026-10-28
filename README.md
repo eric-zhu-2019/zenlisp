@@ -2,33 +2,35 @@
 
 ZParen is a Common Lisp IDE for macOS, built on SBCL. You work in one live
 image: evaluate a form, click the result to inspect the real object, stop in
-the debugger, fix the code, and restart the frame that failed. Claude can work
-in the same image, from the built-in assistant or from Claude Code over MCP.
+the debugger, fix the code, and restart the frame that failed.
+Claude and Codex can work in the same image, from the built-in assistant or
+over MCP.
 
-ZParen was called ZenLisp until October 2026. Its first start copies
-ZenLisp's settings, API keys, MCP token, themes, plugins and conversations.
-The old folders stay where they were.
+![The REPL beside the debugger, with its restarts and backtrace, and the inspector on the right](docs/screenshots/debugger.png)
 
-![The REPL, the debugger with its restarts and backtrace, and the inspector](docs/screenshots/debugger.png)
+## Why I made it
 
-## Written entirely by Claude Code
+I am very interested in Common Lisp. But I found it hard to set up Emacs or Vim
+so that they are easy to use for Lisp. After an upgrade, I often had to find
+the cause of strange errors, and that was frustrating.
 
-ZParen is a vibe-coding project. [Claude Code](https://claude.com/claude-code)
-wrote all of it: the Rust backend, the TypeScript UI, the Lisp that runs inside
-SBCL, the tests, the build and release scripts, and these docs. It ran on
-Claude Opus 5.5. The human author wrote no code. They asked for features,
-used the app, reported bugs, and made the product calls.
+So I decided to make an IDE that works the way I like.
 
-Claude Code worked in a fixed loop. It read the code, made a change, ran
-`scripts/verify.sh`, and committed only when every check passed. Bugs were
-reproduced first, in the browser build driven by Playwright or against a real
-SBCL, and fixes come with tests.
+## Claude Code helped me build it in a weekend
+
+I subscribe to Claude Code, so I used it to build ZParen from scratch.
+
+I used pstack and told Claude Code to "create an IDE to edit, debug and manage
+Common Lisp projects". That is a shorter version of what I wrote.
+
+After some experiments, I also chose Rust and Tauri for the app.
+Some people may ask why I did not write all of it in Lisp. In my opinion, it is
+better to use the right tool for each job.
 
 ### Skills and agents involved
 
-Claude Code ran with the pstack plugin's `/pstack:poteto-mode`, which sets how
-it plans, builds and verifies work. It loaded these skills while building
-ZParen:
+With pstack's `/pstack:poteto-mode`, Claude Code kept working while I slept.
+It loaded these skills while it built ZParen:
 
 | Skill | What it was used for |
 | --- | --- |
@@ -41,17 +43,27 @@ ZParen:
 | `claude-api` | The built-in assistant's Anthropic API client, model and streaming |
 | Principles | `prove-it-works`, `foundational-thinking`, `model-the-domain`, `experience-first`, `exhaust-the-design-space`, `sequence-verifiable-units`, `laziness-protocol`, `build-the-lever`, `boundary-discipline`, `test-behavior-not-implementation`, `never-block-on-the-human` |
 
-Subagents took on separate pieces. Each coding agent worked in its own git
-worktree:
+
+Subagents took on separate pieces. Each coding agent worked in its own git worktree:
 
 | Agent | Work |
 | --- | --- |
 | `pstack:poteto-agent` | The SLIME-compatible indentation engine, paredit-style structural editing, the parinfer wasm crate, and the MCP server with its shared tool registry |
-| `pstack:comment-sicko` | A pass that deleted comments restating the code |
+| `pstack:comment-sicko` | A pass that removed comments restating the code |
 | `Explore` | Research into the UX of other Lisp IDEs |
 | `general-purpose` | Side tasks, including an independent review of the decision trail |
 
-## What it does
+
+## The experience I wanted
+
+1. Vim keys come first.
+2. Emacs keys that make Lisp easy to edit.
+3. An AI assistant from the first day.
+4. MCP, so that external AI tools can work with ZParen.
+5. Helpful tools.
+6. Quicklisp, ocicl and qlot to manage packages.
+
+## What ZParen does
 
 - **REPL and inspector.** Results are live objects. Click one to use it in the
   next input, or ⌘-click it to inspect it. ⌃R searches earlier input. Extra REPLs run
@@ -86,13 +98,16 @@ worktree:
   loaded, and assistant conversations are kept, listed and continued.
 - **Mac app.** Signed releases that carry their own SBCL, and in-app updates.
 
-![Ask AI to fix: the assistant reads the warning and edits the file](docs/screenshots/ask-ai-to-fix.png)
+![Checking as you type: SBCL's warning marks the undefined variable, and the status bar shows the argument list](docs/screenshots/live-check.png)
 
-## Run it
+![Tests as a tree: a failed FiveAM check shows the form and why it failed, with Rerun failed](docs/screenshots/tests.png)
 
-You need Node.js, Rust and SBCL. ZParen looks for `sbcl` on `PATH`, then in
-`/opt/homebrew/bin`, `/usr/local/bin`, and `/opt/local/bin`. Release builds
-carry their own SBCL, so they run on Macs without one.
+![Macroexpansion in place under the form, with Step back, while GREET is traced](docs/screenshots/macrostep.png)
+
+## Build from the source
+
+You need Node.js, Rust and SBCL. ZParen looks for `sbcl` on `PATH`.
+Release builds carry their own SBCL, so they run on Macs without one.
 
 To build and open the app:
 
@@ -118,8 +133,8 @@ files asks to save them first.
 
 A new project has an ASDF system, a test system, and an executable build
 target. It takes its dependencies from Quicklisp, or from ocicl with each
-version pinned in `ocicl.csv`. To use ocicl, run `brew install ocicl` and
-`ocicl setup` once.
+version pinned in `ocicl.csv`.
+To use ocicl, run `brew install ocicl` and `ocicl setup` once.
 
 ZParen finds the dependency manager from the files in the project root:
 
@@ -164,15 +179,28 @@ Claude, ZParen also uses `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or an
 Both providers use the same tools as the MCP server below. Code proposed in a
 reply has **Insert** and **Eval** buttons.
 
-To let Claude Code work in your image, copy the command from the assistant
-settings and run it in a terminal. It looks like this:
+![The assistant evaluates (* 6 7) in the live image and offers code with Copy, Insert and Eval](docs/screenshots/assistant.png)
+
+To let Claude Code work in your image, register ZParen's MCP server once:
+
+1. Open the assistant with ⌘L.
+2. Click the gear icon at the top of the assistant panel.
+3. Under **Use Claude Code with this image**, click **Copy command**.
+4. Paste the command in a terminal and run it.
+
+The command looks like this, with your token in place of `<token>`:
 
 ```sh
 claude mcp add --transport http zparen http://127.0.0.1:7337/mcp --header "Authorization: Bearer <token>"
 ```
 
-The server listens only on `127.0.0.1` and checks the token on every request.
-The token lives in `~/Library/Application Support/ZParen/mcp-token`.
+The token is a password that ZParen makes the first time its MCP server
+starts. The server listens only on `127.0.0.1` and refuses any request
+without the token, so other programs on your Mac cannot run code in your
+image. The token stays the same each time ZParen starts, so you register only once.
+It lives in `~/Library/Application Support/ZParen/mcp-token`, which only your
+user can read. If you remove that file, ZParen makes a new token, and you
+must register again. Keep the token out of chats and repositories.
 
 The tools are `eval`, `compile_form`, `describe_symbol`, `apropos`,
 `find_definitions`, `who_calls`, `macroexpand`, `list_packages`,
@@ -180,15 +208,21 @@ The tools are `eval`, `compile_form`, `describe_symbol`, `apropos`,
 `invoke_restart`, `read_file`, `edit_file`, and `list_files`.
 
 Every warning and error mark has an **Ask AI to fix** button. It shows in the
-hover box and in the box that opens when the cursor reaches a mark. It sends SBCL's message, the file, the line and the code to the
-assistant, which finds the cause and changes the file with `edit_file`. The
+hover box and in the box that opens when the cursor reaches a mark. It sends
+SBCL's message, the file, the line and the code to the assistant. The assistant
+finds the cause and changes the file with `edit_file`. The
 change shows in the editor at once, and one undo takes it back.
+
+![Ask AI to fix: the assistant reads the warning and edits the file](docs/screenshots/ask-ai-to-fix.png)
 
 ## Keys
 
 Press ⇧⌘/ for every shortcut, with a filter. The list comes from the same
-table that defines the bindings, so it is always current. These are the
-ones you use most:
+table that defines the bindings, so it is always current.
+
+![The shortcuts screen in the dark theme, with each command's key, Vim binding and Emacs sequence](docs/screenshots/shortcuts-dark.png)
+
+These are the ones you use most:
 
 | Action | Shortcut | Vim |
 | --- | --- | --- |
@@ -232,13 +266,17 @@ form, so `daf` and `cif` work as you would expect.
 The file tree creates, renames, and moves files to the Trash. When another
 program changes an open file, ZParen reloads it if you have no unsaved
 edits, and asks otherwise. It also asks before closing a file or quitting
-with unsaved changes. Files outside the project, such as SBCL's own sources opened by go to
-definition, are read-only and marked with a lock.
+with unsaved changes. Files outside the project are read-only and show a lock.
+SBCL's own sources, which go to definition can open, are an example.
 
 **Search** in the sidebar finds and replaces across the project, with the
 same `.gitignore` rules as ripgrep. The **Problems** panel lists compiler
 notes from every file. The trash button in the bottom panel clears whichever
 tab is showing.
+
+![One file edited in two panes, side by side](docs/screenshots/split-panes.png)
+
+![The git gutter and inline diff, with a Revert button on each change](docs/screenshots/git-diff.png)
 
 ## Architecture
 
@@ -333,7 +371,7 @@ the image and the app, so Gatekeeper opens them offline.
 
 To ship updates, make a key pair once with `npx tauri signer generate` and
 keep the private half safe. Builds made with the update variables check for a
-newer release at launch and from ZParen ▸ Check for Updates…, and install only
+newer release when they start and from ZParen ▸ Check for Updates…, and install only
 archives signed with that key:
 
 ```sh
