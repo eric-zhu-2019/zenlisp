@@ -34,6 +34,7 @@ is the plugins folder, whose plugins load first."
   (use-own-fasl-cache debug-code)
   (setf swank-repl::*globally-redirect-io* t)
   (lock-image-changes)
+  (accept-coalton-forms)
   (swank::init-presentations)
   (when plugins (uiop:symbol-call :zparen-plugin :load-plugins plugins))
   (let ((port (swank:create-server :port 0 :dont-close t :style :spawn)))
@@ -297,6 +298,75 @@ of the condition, and aborts the compile."
                                 (swank::perform-indentation-update hold-image-lock))
         unless (sb-int:encapsulated-p name 'image-lock)
           do (sb-int:encapsulate name 'image-lock (symbol-function wrapper))))
+
+;; Coalton defines each of its operators as a Lisp macro that only signals
+;; that it is valid inside Coalton, and marks it with where it is valid. A
+;; form typed in the REPL or evaluated from the editor, such as (define x 1) or
+;; (match ...), runs as if written inside COALTON-TOPLEVEL or COALTON.
+(defun coalton-operator (string)
+  "When STRING holds exactly one form headed by a Coalton operator, the Coalton
+macro that form belongs in, and the form's head."
+  (let ((coalton (find-package "COALTON")))
+    (when coalton
+      (ignore-errors
+       (swank::with-buffer-syntax ()
+         (let ((*read-eval* nil))
+           (multiple-value-bind (form end) (read-from-string string)
+             (when (and (consp form) (symbolp (car form))
+                        (eq (read-from-string string nil string :start end) string))
+               (let ((op (case (get (car form) :coalton-repl-context)
+                           (:toplevel (find-symbol "COALTON-TOPLEVEL" coalton))
+                           (:expression (find-symbol "COALTON" coalton)))))
+                 (when op (values op (car form))))))))))))
+
+(defun call-as-coalton (string function)
+  "Calls FUNCTION, which evaluates or compiles STRING. A Coalton form in STRING
+expands inside its Coalton macro, so the compiler still places notes on it."
+  (multiple-value-bind (op head) (coalton-operator string)
+    (if (null op)
+        (funcall function)
+        (let* ((previous *macroexpand-hook*)
+               (done nil)
+               (*macroexpand-hook*
+                 (lambda (expander form env)
+                   (if (and (not done) (consp form) (eq (car form) head))
+                       (progn (setf done t) (list op form))
+                       (funcall previous expander form env)))))
+          (funcall function)))))
+
+(defun coalton-type (symbol-name)
+  "The Coalton type of the value SYMBOL-NAME names, as Coalton prints it, or NIL."
+  (let ((describe (and (find-package "COALTON") (find-symbol "DESCRIBE-TYPE-OF" "COALTON"))))
+    (when (and describe (fboundp describe))
+      (ignore-errors
+       (swank::with-buffer-syntax ()
+         (multiple-value-bind (symbol found) (swank::parse-symbol symbol-name)
+           (when found
+             (let ((type (string-trim '(#\Space #\Newline)
+                                      (with-output-to-string (*standard-output*) (funcall describe symbol)))))
+               (unless (member type '("" "unknown" "macro") :test #'string=) type)))))))))
+
+(defun document-with-coalton-type (function symbol-name)
+  (let ((doc (funcall function symbol-name))
+        (type (coalton-type symbol-name)))
+    (if (and type (stringp doc))
+        (let ((body (search (format nil "~2%") doc)))
+          (format nil "~a~2%Coalton type: ~a~2%~a" (subseq doc 0 (or body 0))
+                  type (string-left-trim '(#\Newline) (remove-not-documented (subseq doc (or body 0))))))
+        doc)))
+
+(defun remove-not-documented (text)
+  (let ((at (search "Not documented." text)))
+    (if at (concatenate 'string (subseq text 0 at) (subseq text (+ at (length "Not documented.")))) text)))
+
+(defun accept-coalton-forms ()
+  (loop for name in '(swank::eval-region swank:eval-and-grab-output swank:compile-string-for-emacs)
+        unless (sb-int:encapsulated-p name 'coalton)
+          do (sb-int:encapsulate name 'coalton
+                                 (lambda (function string &rest args)
+                                   (call-as-coalton string (lambda () (apply function string args))))))
+  (unless (sb-int:encapsulated-p 'swank:documentation-symbol 'coalton)
+    (sb-int:encapsulate 'swank:documentation-symbol 'coalton #'document-with-coalton-type)))
 
 (defvar *checking* nil "True while a check compiles, which is not a compile the user asked for.")
 

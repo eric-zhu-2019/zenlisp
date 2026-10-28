@@ -1373,6 +1373,22 @@ test("a file's check compiles the files it depends on first, so their functions 
   await expect(page.locator(".presentation", { hasText: '"hello built"' })).toBeVisible();
 });
 
+test("a new project can be written in Coalton", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-typed");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await expect(page.getByRole("radio", { name: "Common Lisp" }), "Common Lisp stays the default").toHaveAttribute("aria-checked", "true");
+  await page.getByRole("radio", { name: "Coalton" }).click();
+  await expect(page.locator(".dialog-hint", { hasText: "coalton-toplevel" })).toBeVisible();
+  await page.getByRole("button", { name: "Create" }).click();
+  const root = join(parent, "zen-typed");
+  await expect(page.locator(".editor-host .cm-content"), "main.lisp opens on its Coalton code").toContainText("(declare greet (String -> String))", { timeout: 30_000 });
+  expect(readFileSync(join(root, "zen-typed.asd"), "utf8")).toContain(':depends-on ("coalton")');
+  expect(readFileSync(join(root, "src/package.lisp"), "utf8")).toContain("(:use #:coalton #:coalton-prelude)");
+});
+
 test("a new project can take its dependencies from ocicl", async ({ page }) => {
   test.skip(!existsSync(join(homedir(), ".local/share/ocicl/ocicl-runtime.lisp")), "ocicl is not set up on this Mac");
   const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
@@ -1381,7 +1397,7 @@ test("a new project can take its dependencies from ocicl", async ({ page }) => {
   await page.getByPlaceholder("my-app").fill("zen-oc");
   await page.getByPlaceholder("/Users/you/projects").fill(parent);
   await page.getByRole("radio", { name: "ocicl" }).click();
-  await expect(page.locator(".dialog-hint")).toContainText("pinned in ocicl.csv");
+  await expect(page.locator(".dialog-hint", { hasText: "pinned in ocicl.csv" })).toBeVisible();
   await shots(page, "32-new-project-ocicl");
   await page.getByRole("button", { name: "Create" }).click();
   await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });

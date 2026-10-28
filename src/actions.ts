@@ -15,6 +15,7 @@ import type { Debugger } from "./protocol/Debugger";
 import type { EditorContext } from "./protocol/EditorContext";
 import { chatFromHistory } from "./ui/chatHistory";
 import type { NewDeps } from "./protocol/NewDeps";
+import type { NewLanguage } from "./protocol/NewLanguage";
 import type { Note } from "./protocol/Note";
 import { useSettings } from "./settings";
 import type { SystemInfo } from "./protocol/SystemInfo";
@@ -241,9 +242,9 @@ export async function requestOpenProject(root?: string) {
 }
 
 /** Creates and opens a project; false when the user chose to stay in the open one. */
-export async function newProject(parent: string, name: string, deps: NewDeps = "quicklisp") {
+export async function newProject(parent: string, name: string, deps: NewDeps = "quicklisp", language: NewLanguage = "lisp") {
   if (!(await leaveProject())) return false;
-  const r = await request({ type: "newProject", parent, name, deps });
+  const r = await request({ type: "newProject", parent, name, deps, language });
   if (r.type !== "project") return false;
   rememberProject(r.project.root);
   set({ tabs: [], ...emptyPanes(), notes: {} });
@@ -894,6 +895,9 @@ export function flash(text: string, tone: "info" | "error" = "info") {
   setTimeout(() => get().flash?.text === text && set({ flash: null }), 3500);
 }
 
+/** Source the image compiles: .lisp files, and Coalton's .ct files, which are Lisp syntax. */
+const isLispSource = (path: string) => /\.(lisp|ct)$/.test(path);
+
 /**
  * Compiles, in file order, the top-level forms of `text` that Lisp does not
  * have, so Lisp keeps up with the file without recompiling all of it. Lisp has
@@ -902,7 +906,7 @@ export function flash(text: string, tone: "info" | "error" = "info") {
  * their file needs another file of the project loaded first.
  */
 async function compileChangedForms(path: string, text: string, source = "") {
-  if (!path.endsWith(".lisp") || get().status.session.state !== "ready") return;
+  if (!isLispSource(path) || get().status.session.state !== "ready") return;
   const baseline = compiledForms.get(path) ?? new Set<string>();
   const changed = topLevelForms(text)
     .map((f) => ({ ...f, text: text.slice(f.from, f.to) }))
@@ -964,7 +968,7 @@ export function readOnlyFile(path: string) {
  * loaded, and the compiler's warnings replace the file's notes.
  */
 export function checkSoon(path: string, delay = 600) {
-  if (!useSettings.getState().liveCheck || !path.endsWith(".lisp") || !inProject(path) || get().status.session.state !== "ready") return;
+  if (!useSettings.getState().liveCheck || !isLispSource(path) || !inProject(path) || get().status.session.state !== "ready") return;
   clearTimeout(checkTimers.get(path));
   checkTimers.set(path, setTimeout(() => void checkNow(path), delay));
 }
@@ -1077,7 +1081,7 @@ export async function findDefinition(name: string, pkg: string, from?: { path: s
     caseSensitive: false,
     wholeWord: false,
   }).catch(() => null);
-  const hit = found?.files.find((f) => f.path.endsWith(".lisp") || f.path.endsWith(".asd")) ?? found?.files[0];
+  const hit = found?.files.find((f) => isLispSource(f.path) || f.path.endsWith(".asd")) ?? found?.files[0];
   if (!hit) return false;
   return navigateToLine(hit.path, hit.lines[0].line, hit.lines[0].spans[0]?.[0] ?? 0);
 }

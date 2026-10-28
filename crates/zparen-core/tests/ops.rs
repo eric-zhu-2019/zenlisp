@@ -415,3 +415,49 @@ async fn plugins_add_commands_settings_checks_and_repl_hooks() {
     s.stop().await;
     let _ = std::fs::remove_dir_all(&data);
 }
+
+#[tokio::test]
+async fn coalton_forms_run_inside_coalton_and_hovers_show_coalton_types() {
+    let s = start().await;
+    let c = &s.conn;
+    let run = |op: Op| async move { tokio::time::timeout(Duration::from_secs(10), op.run(c)).await.expect("answers").unwrap() };
+    let eval = |form: &str| {
+        let op = cl(|package| Op::Eval { form: form.into(), package });
+        async move {
+            match run(op).await {
+                Reply::Evaluated { value, .. } => value,
+                other => panic!("{other:?}"),
+            }
+        }
+    };
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/coalton-stand-in.lisp");
+    eval(&format!("(load {:?})", fixture.display().to_string())).await;
+
+    assert_eq!(eval("(coalton:define x 1)").await, ":TOPLEVEL");
+    assert_eq!(eval("cl-user::*compiled*").await, "((COALTON:DEFINE X 1))");
+    assert_eq!(eval("(coalton:match y)").await, "(:EXPRESSION (COALTON:MATCH Y))");
+    assert_eq!(eval("(list 'coalton:define)").await, "(COALTON:DEFINE)", "Lisp forms run as written");
+
+    run(cl(|package| Op::ReplEval { input: "(coalton:define z 2)".into(), package })).await;
+    assert_eq!(eval("cl-user::*compiled*").await, "((COALTON:DEFINE Z 2))");
+
+    let Reply::Compiled { success, notes, .. } = run(cl(|package| Op::CompileForm {
+        form: "(coalton:define w 3)".into(),
+        buffer: "scratch".into(),
+        file: None,
+        offset: 0,
+        package,
+    }))
+    .await
+    else {
+        panic!()
+    };
+    assert!(success && notes.is_empty(), "{notes:?}");
+    assert_eq!(eval("cl-user::*compiled*").await, "((COALTON:DEFINE W 3))");
+
+    let Reply::Text { text } = run(cl(|package| Op::Describe { symbol: "add2".into(), package })).await else { panic!() };
+    assert!(text.contains("Coalton type: (INTEGER → INTEGER)") && !text.contains("Not documented"), "{text}");
+    let Reply::Text { text } = run(cl(|package| Op::Describe { symbol: "car".into(), package })).await else { panic!() };
+    assert!(!text.contains("Coalton type"), "{text}");
+    s.stop().await;
+}

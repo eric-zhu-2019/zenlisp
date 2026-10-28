@@ -4,7 +4,19 @@ import { RangeSetBuilder, type Extension } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 
-export const lispLanguage = StreamLanguage.define(commonLisp);
+/** Coalton's operators the Common Lisp mode does not already color, as heads of forms. */
+const COALTON_FORMS = /^(coalton-toplevel|coalton|declare|match|fn|lisp|rec|for\*?|break|continue|return|derive|repr|monomorphize|specialize|inline|noinline|handle|protect|resumable|resume-to)$/;
+
+export const lispMode: typeof commonLisp = {
+  ...commonLisp,
+  token(stream, state) {
+    const afterOpen = (state as { lastType: string | null }).lastType === "open";
+    const style = commonLisp.token(stream, state);
+    return style === "variableName" && afterOpen && COALTON_FORMS.test(stream.current()) ? "keyword" : style;
+  },
+};
+
+export const lispLanguage = StreamLanguage.define(lispMode);
 
 const highlight = HighlightStyle.define([
   { tag: t.comment, color: "var(--syn-comment)", fontStyle: "italic" },

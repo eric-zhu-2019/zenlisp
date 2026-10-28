@@ -61,7 +61,7 @@ async fn new_project_loads_tests_and_builds() {
     let mut rx = wb.subscribe();
     let parent = tmp("new");
     let Response::Project { project } = wb
-        .handle(Request::NewProject { parent: parent.display().to_string(), name: "hello-zen".into(), deps: Default::default() })
+        .handle(Request::NewProject { parent: parent.display().to_string(), name: "hello-zen".into(), deps: Default::default(), language: Default::default() })
         .await
         .unwrap() else { panic!() };
     assert_eq!(project.name, "hello-zen");
@@ -184,7 +184,7 @@ async fn a_dying_lisp_says_why_and_a_saved_image_starts_with_the_project_loaded(
     let wb = Workbench::new(cfg);
     let mut rx = wb.subscribe();
     let parent = tmp("image");
-    wb.handle(Request::NewProject { parent: parent.display().to_string(), name: "imaged-zen".into(), deps: Default::default() }).await.unwrap();
+    wb.handle(Request::NewProject { parent: parent.display().to_string(), name: "imaged-zen".into(), deps: Default::default(), language: Default::default() }).await.unwrap();
     status_until(&wb, |s| matches!(s, SessionState::Ready { image: false, .. })).await;
 
     let exit = Op::Eval { form: r#"(progn (format sb-sys:*stderr* "about to go~%") (finish-output sb-sys:*stderr*) (sb-ext:exit :code 3 :abort t))"#.into(), package: "CL-USER".into() };

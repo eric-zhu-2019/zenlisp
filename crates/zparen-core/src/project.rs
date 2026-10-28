@@ -41,6 +41,17 @@ pub enum NewDeps {
     Ocicl,
 }
 
+/// The language a new project's code is written in.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum NewLanguage {
+    #[default]
+    Lisp,
+    /// Coalton, a statically typed language inside Common Lisp.
+    Coalton,
+}
+
 const VENDOR_DIRS: [&str; 4] = ["vendor", "lib", "third_party", "deps"];
 
 fn home() -> PathBuf {
@@ -241,7 +252,7 @@ impl Project {
 
 /// Creates a new ASDF project with a package, a main file and a test system,
 /// and for ocicl an empty `ocicl.csv` that `ocicl install` fills.
-pub fn create(parent: &Path, name: &str, deps: NewDeps) -> std::io::Result<PathBuf> {
+pub fn create(parent: &Path, name: &str, deps: NewDeps, language: NewLanguage) -> std::io::Result<PathBuf> {
     let valid = !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
     if !valid {
         return Err(std::io::Error::other("project names use lowercase letters, digits and dashes"));
@@ -253,6 +264,10 @@ pub fn create(parent: &Path, name: &str, deps: NewDeps) -> std::io::Result<PathB
     if root.exists() {
         return Err(std::io::Error::other(format!("{} already exists", root.display())));
     }
+    let (depends, uses) = match language {
+        NewLanguage::Lisp => ("", "#:cl"),
+        NewLanguage::Coalton => ("\"coalton\"", "#:coalton #:coalton-prelude"),
+    };
     std::fs::create_dir_all(root.join("src"))?;
     std::fs::create_dir_all(root.join("tests"))?;
     let files = [
@@ -262,7 +277,7 @@ pub fn create(parent: &Path, name: &str, deps: NewDeps) -> std::io::Result<PathB
                 r#"(defsystem "{name}"
   :description "{name}"
   :version "0.1.0"
-  :depends-on ()
+  :depends-on ({depends})
   :components ((:module "src"
                 :components ((:file "package")
                              (:file "main" :depends-on ("package")))))
@@ -280,12 +295,13 @@ pub fn create(parent: &Path, name: &str, deps: NewDeps) -> std::io::Result<PathB
         ),
         (
             "src/package.lisp".into(),
-            format!("(defpackage #:{name}\n  (:use #:cl)\n  (:export #:main #:greet))\n"),
+            format!("(defpackage #:{name}\n  (:use {uses})\n  (:export #:main #:greet))\n"),
         ),
         (
             "src/main.lisp".into(),
-            format!(
-                r#"(in-package #:{name})
+            match language {
+                NewLanguage::Lisp => format!(
+                    r#"(in-package #:{name})
 
 (defun greet (name)
   (format nil "Hello, ~a!" name))
@@ -293,7 +309,20 @@ pub fn create(parent: &Path, name: &str, deps: NewDeps) -> std::io::Result<PathB
 (defun main ()
   (write-line (greet "world")))
 "#
-            ),
+                ),
+                NewLanguage::Coalton => format!(
+                    r#"(in-package #:{name})
+
+(coalton-toplevel
+  (declare greet (String -> String))
+  (define (greet name)
+    (<> "Hello, " (<> name "!"))))
+
+(cl:defun main ()
+  (cl:write-line (greet "world")))
+"#
+                ),
+            },
         ),
         (
             "tests/main.lisp".into(),
@@ -367,17 +396,30 @@ mod tests {
     #[test]
     fn creates_projects_and_rejects_bad_names() {
         let parent = tmp("create");
-        let root = create(&parent, "hello-zen", NewDeps::Quicklisp).unwrap();
+        let root = create(&parent, "hello-zen", NewDeps::Quicklisp, NewLanguage::Lisp).unwrap();
         assert!(root.join("hello-zen.asd").is_file());
         assert!(!root.join("ocicl.csv").exists());
-        assert!(create(&parent, "hello-zen", NewDeps::Quicklisp).is_err());
-        assert!(create(&parent, "Bad Name", NewDeps::Quicklisp).is_err());
+        assert!(create(&parent, "hello-zen", NewDeps::Quicklisp, NewLanguage::Lisp).is_err());
+        assert!(create(&parent, "Bad Name", NewDeps::Quicklisp, NewLanguage::Lisp).is_err());
+    }
+
+    #[test]
+    fn a_coalton_project_depends_on_coalton_and_defines_its_code_in_coalton() {
+        let parent = tmp("create-coalton");
+        let root = create(&parent, "co-zen", NewDeps::Quicklisp, NewLanguage::Coalton).unwrap();
+        let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
+        assert!(read("co-zen.asd").contains(":depends-on (\"coalton\")"));
+        assert!(read("src/package.lisp").contains("(:use #:coalton #:coalton-prelude)"));
+        assert!(read("src/main.lisp").contains("(coalton-toplevel\n  (declare greet (String -> String))"));
+        assert!(read("tests/main.lisp").contains("(co-zen:greet \"Lisp\")"), "tests call the Coalton function from Lisp");
+        let plain = create(&parent, "lisp-zen", NewDeps::Quicklisp, NewLanguage::Lisp).unwrap();
+        assert!(std::fs::read_to_string(plain.join("lisp-zen.asd")).unwrap().contains(":depends-on ()"));
     }
 
     #[test]
     fn an_ocicl_project_pins_its_dependencies_and_leaves_quicklisp_out() {
         let parent = tmp("create-ocicl");
-        match create(&parent, "oc-zen", NewDeps::Ocicl) {
+        match create(&parent, "oc-zen", NewDeps::Ocicl, NewLanguage::Lisp) {
             Ok(root) => {
                 assert!(root.join("ocicl.csv").is_file());
                 let managers = Project::detect(&root).managers;

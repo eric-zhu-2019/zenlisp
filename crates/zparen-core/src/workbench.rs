@@ -2,7 +2,7 @@ use crate::assistant::{Assistant, AssistantConfig, AssistantEvent, AssistantStat
 use crate::files;
 use crate::search;
 use crate::ops::{Op, Reply};
-use crate::project::{self, NewDeps, Project};
+use crate::project::{self, NewDeps, NewLanguage, Project};
 use crate::session::{use_macos_ca_bundle, Session, SessionConfig};
 use crate::sexp::Sexp;
 use crate::swank::{Debugger, Event, Thread};
@@ -26,7 +26,7 @@ pub enum Request {
     #[serde(rename_all = "camelCase")]
     OpenProject { root: String },
     #[serde(rename_all = "camelCase")]
-    NewProject { parent: String, name: String, #[serde(default)] deps: NewDeps },
+    NewProject { parent: String, name: String, #[serde(default)] deps: NewDeps, #[serde(default)] language: NewLanguage },
     /// Which dependency managers a new project can use on this Mac.
     NewProjectChoices,
     CloseProject,
@@ -529,8 +529,8 @@ impl Workbench {
             }
             Request::Status => Ok(Response::Status(self.status().await)),
             Request::OpenProject { root } => self.open_project(Path::new(&root)).await,
-            Request::NewProject { parent, name, deps } => {
-                let root = project::create(Path::new(&parent), &name, deps).map_err(|e| e.to_string())?;
+            Request::NewProject { parent, name, deps, language } => {
+                let root = project::create(Path::new(&parent), &name, deps, language).map_err(|e| e.to_string())?;
                 self.open_project(&root).await
             }
             Request::NewProjectChoices => Ok(Response::NewProjectChoices {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import * as actions from "../actions";
 import { openExternal, pickFile, pickFolder, recentProjects } from "../platform";
 import type { NewDeps } from "../protocol/NewDeps";
+import type { NewLanguage } from "../protocol/NewLanguage";
 import { set, useStore } from "../store";
 import { Icon } from "./Icon";
 
@@ -234,10 +235,16 @@ const DEPS_HINT: Record<NewDeps, string> = {
   ocicl: "Each dependency's exact version is pinned in ocicl.csv, and ocicl fetches it from its registry.",
 };
 
+const LANGUAGE_HINT: Record<NewLanguage, string> = {
+  lisp: "Plain Common Lisp.",
+  coalton: "Statically typed code in coalton-toplevel forms, with the coalton system as a dependency.",
+};
+
 export function NewProjectDialog({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [parent, setParent] = useState("");
   const [deps, setDeps] = useState<NewDeps>("quicklisp");
+  const [language, setLanguage] = useState<NewLanguage>("lisp");
   const [ocicl, setOcicl] = useState<{ ready: boolean; missing: string } | null>(null);
   const [error, setError] = useState("");
   const nameOk = /^[a-z][a-z0-9-]*$/.test(name);
@@ -260,7 +267,7 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
         onSubmit={async (e) => {
           e.preventDefault();
           try {
-            if (await actions.newProject(parent, name, deps)) onClose();
+            if (await actions.newProject(parent, name, deps, language)) onClose();
           } catch (err) {
             setError(String(err instanceof Error ? err.message : err));
           }
@@ -279,6 +286,22 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         {!parent && <div className="dialog-hint">Choose the folder the project goes in.</div>}
+        <label>Language</label>
+        <div className="segmented" role="radiogroup" aria-label="Language">
+          {(["lisp", "coalton"] as const).map((l) => (
+            <button
+              key={l}
+              type="button"
+              role="radio"
+              aria-checked={language === l}
+              className={language === l ? "active" : ""}
+              onClick={() => setLanguage(l)}
+            >
+              {l === "lisp" ? "Common Lisp" : "Coalton"}
+            </button>
+          ))}
+        </div>
+        <div className="dialog-hint">{LANGUAGE_HINT[language]}</div>
         <label>Dependencies</label>
         <div className="segmented" role="radiogroup" aria-label="Dependencies">
           {(["quicklisp", "ocicl"] as const).map((d) => (
