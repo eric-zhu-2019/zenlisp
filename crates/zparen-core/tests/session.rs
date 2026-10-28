@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use zparen_core::session::{Session, SessionConfig};
+use zparen_core::session::{Session, SessionConfig, CA_BUNDLES};
 use zparen_core::sexp::Sexp;
 use zparen_core::swank::{Event, Thread};
 
@@ -48,17 +48,21 @@ async fn errors_enter_the_debugger_and_abort_returns() {
     s.stop().await;
 }
 
-/// ocicl-runtime fetches a missing system by running ocicl, which needs to find macOS's CA bundle.
+/// ocicl-runtime fetches a missing system by running ocicl, which needs a CA bundle it can read.
 #[tokio::test]
-async fn programs_lisp_runs_find_the_macos_ca_bundle() {
-    if std::env::var_os("SSL_CERT_FILE").is_some() || !std::path::Path::new("/etc/ssl/cert.pem").is_file() {
-        eprintln!("SSL_CERT_FILE is set or /etc/ssl/cert.pem is missing; nothing to check");
+async fn programs_lisp_runs_find_a_ca_bundle() {
+    let Some(bundle) = CA_BUNDLES.into_iter().find(|b| std::path::Path::new(b).is_file()) else {
+        eprintln!("no CA bundle on this Mac; nothing to check");
+        return;
+    };
+    if std::env::var_os("SSL_CERT_FILE").is_some() {
+        eprintln!("SSL_CERT_FILE is set; nothing to check");
         return;
     }
     let s = Session::start(&SessionConfig::new(resources())).await.unwrap();
     let form = r#"(swank:eval-and-grab-output "(princ (uiop:run-program '(\"printenv\" \"SSL_CERT_FILE\") :output '(:string :stripped t) :ignore-error-status t))")"#;
     let v = s.conn.rex(Sexp::parse(form).unwrap(), "CL-USER", Thread::T).await.unwrap();
-    assert_eq!(v.items()[0], Sexp::str("/etc/ssl/cert.pem"));
+    assert_eq!(v.items()[0], Sexp::str(bundle));
     s.stop().await;
 }
 

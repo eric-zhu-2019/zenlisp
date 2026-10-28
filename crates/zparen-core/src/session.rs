@@ -447,11 +447,22 @@ fn dir_string(p: &std::path::Path) -> String {
     s
 }
 
+/// CA bundles in the order ocicl should use them. Homebrew's comes first because
+/// macOS's holds a root that ocicl cannot parse and warns about on every run.
+pub const CA_BUNDLES: [&str; 3] = [
+    "/opt/homebrew/etc/ca-certificates/cert.pem",
+    "/usr/local/etc/ca-certificates/cert.pem",
+    "/etc/ssl/cert.pem",
+];
+
 /// ocicl looks for a Linux CA bundle unless told where macOS keeps one. Lisp
 /// passes this on to the ocicl it runs to fetch a missing system.
 pub fn use_macos_ca_bundle(cmd: &mut Command) {
-    if std::env::var_os("SSL_CERT_FILE").is_none() && Path::new("/etc/ssl/cert.pem").is_file() {
-        cmd.env("SSL_CERT_FILE", "/etc/ssl/cert.pem");
+    if std::env::var_os("SSL_CERT_FILE").is_some() {
+        return;
+    }
+    if let Some(bundle) = CA_BUNDLES.iter().find(|b| Path::new(b).is_file()) {
+        cmd.env("SSL_CERT_FILE", bundle);
     }
 }
 
