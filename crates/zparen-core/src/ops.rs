@@ -9,7 +9,7 @@ use ts_rs::TS;
 pub enum Op {
     /// Evaluates REPL input in the REPL thread. Output and results arrive as events.
     #[serde(rename_all = "camelCase")]
-    ReplEval { input: String },
+    ReplEval { input: String, package: String },
     /// Evaluates a form and returns its printed output and values.
     #[serde(rename_all = "camelCase")]
     Eval { form: String, package: String },
@@ -474,7 +474,7 @@ impl Op {
         use Op::*;
         let t = Thread::T;
         match self {
-            ReplEval { input } => (rpc("swank-repl:listener-eval", [s(input)]), Thread::Repl),
+            ReplEval { input, .. } => (rpc("swank-repl:listener-eval", [s(input)]), Thread::Repl),
             Eval { form, .. } => (rpc("swank:eval-and-grab-output", [s(form)]), t),
             CompileForm { form, buffer, file, offset, .. } => (
                 rpc(
@@ -636,7 +636,8 @@ impl Op {
     pub fn package(&self) -> &str {
         use Op::*;
         match self {
-            Eval { package, .. }
+            ReplEval { package, .. }
+            | Eval { package, .. }
             | CompileForm { package, .. }
             | Complete { package, .. }
             | Autodoc { package, .. }

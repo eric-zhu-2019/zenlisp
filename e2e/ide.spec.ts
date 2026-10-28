@@ -98,6 +98,15 @@ test("new project, evaluate, debug and inspect", async ({ page }) => {
   await page.keyboard.press("Enter");
   await expect(page.locator(".presentation", { hasText: /^5$/ })).toBeVisible();
 
+  await replEval(page, "(in-package :zen-demo)");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { zenRepl: { state: { doc: { toString(): string } } } }).zenRepl.state.doc.toString()), {
+    message: "the prompt names the new package",
+  }).toMatch(/ZEN-DEMO> $/);
+  await replEval(page, "(package-name *package*)");
+  await expect(page.locator(".repl-buffer .cm-line", { hasText: "ZEN-DEMO> (package-name *package*)" })).toBeVisible();
+  await expect(page.locator(".presentation", { hasText: /^"(ZEN-DEMO|COMMON-LISP-USER)"$/ }), "the next form runs in the package the prompt names").toHaveText('"ZEN-DEMO"');
+  await replEval(page, "(in-package :cl-user)");
+
   await replEval(page, "(read-line)");
   await expect.poll(() => replInputText(page), { message: "no prompt while Lisp reads a line" }).not.toContain("CL-USER");
   await page.keyboard.type("hello there");

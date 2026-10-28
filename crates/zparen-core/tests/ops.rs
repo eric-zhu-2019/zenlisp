@@ -30,7 +30,7 @@ fn cl(op: impl FnOnce(String) -> Op) -> Op {
 async fn repl_eval_streams_output_and_presented_result() {
     let s = start().await;
     let mut events = s.conn.subscribe();
-    Op::ReplEval { input: "(progn (princ \"hello\") (list 1 2))".into() }.run(&s.conn).await.unwrap();
+    cl(|package| Op::ReplEval { input: "(progn (princ \"hello\") (list 1 2))".into(), package }).run(&s.conn).await.unwrap();
     let mut output = String::new();
     let mut result = String::new();
     let mut presented = false;
@@ -404,7 +404,7 @@ async fn plugins_add_commands_settings_checks_and_repl_hooks() {
     assert_eq!(value, "((\"compiled.lisp\" T))", "a compile runs its hook once, and checks run none");
 
     let mut events = c.subscribe();
-    Op::ReplEval { input: ",hello".into() }.run(c).await.unwrap();
+    cl(|package| Op::ReplEval { input: ",hello".into(), package }).run(c).await.unwrap();
     let mut output = String::new();
     while let Ok(Ok(e)) = tokio::time::timeout(Duration::from_millis(500), events.recv()).await {
         if let Event::Output { text, .. } = e {

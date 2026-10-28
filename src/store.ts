@@ -350,7 +350,7 @@ export function reduce(s: State, e: AppEvent): Partial<State> {
       return { inputRequest: null };
     case "disconnected":
       // Extra REPLs' threads die with the image.
-      return { debuggers: {}, inputRequest: null, openPresentation: null, repls: [], activeRepl: null };
+      return { debuggers: {}, inputRequest: null, openPresentation: null, repls: [], activeRepl: null, package: "COMMON-LISP-USER" };
     case "channel": {
       const m = ev.message;
       return updateRepl(s, ev.channel, (r) => {

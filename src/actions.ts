@@ -125,7 +125,7 @@ export async function replEval(input: string, shown = input) {
   set({ bottom: "repl" });
   replRunning++;
   try {
-    await lisp({ op: "replEval", input });
+    await lisp({ op: "replEval", input, package: get().package });
   } finally {
     replRunning--;
   }
