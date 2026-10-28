@@ -1389,6 +1389,31 @@ test("a new project can be written in Coalton", async ({ page }) => {
   expect(readFileSync(join(root, "src/package.lisp"), "utf8")).toContain("(:use #:coalton #:coalton-prelude)");
 });
 
+test("a Coalton type error from ⌘Enter is a note on the expression Coalton blames, not the debugger", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-blame");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  // A stand-in for Coalton's interface; the real Coalton is a large download.
+  const standIn = join(process.cwd(), "crates/zparen-core/tests/fixtures/coalton-stand-in.lisp");
+  await page.locator(".panel-tab", { hasText: "REPL" }).click();
+  await replEval(page, `(load "${standIn}")`);
+  await expect(page.locator(".presentation", { hasText: /^T$/ })).toBeVisible({ timeout: 20_000 });
+  writeFileSync(join(parent, "zen-blame/src/main.lisp"), "(in-package :cl-user)\n\n(coalton:coalton-toplevel\n  (coalton:define w (bad 1)))\n");
+  await page.locator(".tab", { hasText: "main.lisp" }).click();
+  const editor = page.locator(".editor-host");
+  await editor.locator(".cm-line", { hasText: "(coalton:define w" }).click();
+  await page.keyboard.press("Meta+Enter");
+  await expect(editor.locator(".cm-inline-error")).toHaveText("compile failed");
+  await expect(editor.locator(".cm-lintRange-error").first()).toHaveText("(bad 1)");
+  await page.locator(".panel-tab", { hasText: "Problems" }).click();
+  await expect(page.getByTestId("problems"), "in Coalton's words").toContainText("Ambiguous predicate");
+  await expect(page.getByTestId("debugger")).toHaveCount(0);
+});
+
 test("a new project can take its dependencies from ocicl", async ({ page }) => {
   test.skip(!existsSync(join(homedir(), ".local/share/ocicl/ocicl-runtime.lisp")), "ocicl is not set up on this Mac");
   const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));

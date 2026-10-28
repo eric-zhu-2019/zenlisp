@@ -1,6 +1,11 @@
 ;;;; A stand-in for Coalton's interface: operators marked as Coalton marks
 ;;;; them, which signal outside Coalton as Coalton's do.
 
+(defpackage #:coalton-impl/source
+  (:use #:cl)
+  (:export #:source-error #:notes #:location #:location-source #:location-span
+           #:source-file-path #:span-start))
+
 (defpackage #:coalton
   (:use)
   (:export #:coalton-toplevel #:coalton #:define #:match #:describe-type-of))
@@ -15,9 +20,41 @@
   (error "The operator MATCH is only valid in a Coalton expression."))
 (setf (get 'coalton:match :coalton-repl-context) :expression)
 
+(in-package #:coalton-impl/source)
+
+(defstruct source file-path)
+(defstruct location source span)
+(defstruct note location)
+(defun span-start (span) (car span))
+
+(define-condition source-error (error)
+  ((notes :initarg :notes :reader notes))
+  (:report (lambda (c s)
+             (let ((location (note-location (first (notes c)))))
+               (format s "error: Ambiguous predicate~%  --> ~a:~a"
+                       (source-file-path (location-source location)) (span-start (location-span location)))))))
+
+(defmethod location ((note note)) (note-location note))
+
+(in-package #:cl-user)
+
 (defvar cl-user::*compiled* nil)
 
+(defun blamed (forms)
+  "Where Coalton would blame a call to BAD in FORMS: in the file being compiled, when there is one."
+  (when (search "(BAD" (prin1-to-string forms))
+    (let* ((file *compile-file-truename*)
+           (text (and file (uiop:read-file-string file))))
+      (error 'coalton-impl/source:source-error
+             :notes (list (coalton-impl/source::make-note
+                           :location (coalton-impl/source::make-location
+                                      :source (coalton-impl/source::make-source
+                                               ;; As Coalton names it: by the editor buffer, when compiling one.
+                                               :file-path (or (getf sb-c::*source-plist* :emacs-buffer) file "<macroexpansion>"))
+                                      :span (let ((at (if text (search "(bad" text) 0))) (cons at (+ at 7))))))))))
+
 (defmacro coalton:coalton-toplevel (&body forms)
+  (blamed forms)
   `(progn (setf cl-user::*compiled* ',forms) :toplevel))
 
 (defmacro coalton:coalton (form)

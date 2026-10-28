@@ -359,14 +359,96 @@ expands inside its Coalton macro, so the compiler still places notes on it."
   (let ((at (search "Not documented." text)))
     (if at (concatenate 'string (subseq text 0 at) (subseq text (+ at (length "Not documented.")))) text)))
 
+(defun coalton-symbol (name package)
+  (let ((p (find-package package)))
+    (and p (find-symbol name p))))
+
+(defun coalton-readtable ()
+  "Coalton's readtable. Code read with it keeps its place in the file, so
+Coalton's errors point at the expression they are about."
+  (let ((find (coalton-symbol "FIND-READTABLE" "NAMED-READTABLES"))
+        (name (coalton-symbol "COALTON" "COALTON")))
+    (and find name (fboundp find) (funcall find name))))
+
+(defun coalton-error-offset (condition)
+  "Where in the text being compiled Coalton places its error CONDITION, when
+Coalton read that text itself: the start of the expression its first note is
+on. Coalton names text compiled from an editor buffer by the buffer."
+  (flet ((call (name arg) (funcall (coalton-symbol name "COALTON-IMPL/SOURCE") arg)))
+    (ignore-errors
+     (let* ((location (call "LOCATION" (first (call "NOTES" condition))))
+            (file (call "SOURCE-FILE-PATH" (call "LOCATION-SOURCE" location))))
+       (when (if swank/sbcl::*buffer-name*
+                 (equal file swank/sbcl::*buffer-name*)
+                 (and *compile-file-truename* (equal (probe-file file) (probe-file *compile-file-truename*))))
+         (call "SPAN-START" (call "LOCATION-SPAN" location)))))))
+
+(defun coalton-error-location (condition)
+  (let ((offset (coalton-error-offset condition)))
+    (cond ((null offset)
+           (swank/sbcl::compiler-note-location condition (sb-c::find-error-context nil)))
+          (swank/sbcl::*buffer-name*
+           (swank/backend:make-location (list :buffer swank/sbcl::*buffer-name*)
+                                        (list :offset swank/sbcl::*buffer-offset* offset)))
+          (t
+           (swank/backend:make-location (list :file (namestring *compile-file-truename*))
+                                        (list :position (1+ offset)))))))
+
+(defun compile-with-coalton-errors (text function)
+  "Calls FUNCTION, a Swank compile of TEXT. A form that Coalton rejects becomes an
+error note in Coalton's words, placed on the expression Coalton blames, and
+compiles to nothing, so loading the result does not stop on it. Other errors
+are left to the compiler, as before."
+  (let ((error-type (coalton-symbol "SOURCE-ERROR" "COALTON-IMPL/SOURCE")))
+    (if (null error-type)
+        (funcall function)
+        (let* ((readtable (and (search "coalton" text :test #'char-equal) (coalton-readtable)))
+               (swank::*buffer-readtable* (or readtable swank::*buffer-readtable*))
+               (failed nil)
+               (depth 0)
+               (previous *macroexpand-hook*)
+               (*macroexpand-hook*
+                 (lambda (expander form env)
+                   (if (plusp depth)
+                       (funcall previous expander form env)
+                       (block expand
+                         (handler-bind ((error (lambda (c)
+                                                 (when (typep c error-type)
+                                                   (setf failed t)
+                                                   (signal 'swank/backend:compiler-condition
+                                                           :original-condition c
+                                                           :severity :error
+                                                           :message (princ-to-string c)
+                                                           :source-context nil
+                                                           :references nil
+                                                           :location (coalton-error-location c))
+                                                   (return-from expand '(values))))))
+                           (incf depth)
+                           (unwind-protect (funcall previous expander form env)
+                             (decf depth)))))))
+               (result (funcall function)))
+          (when (and failed (consp result) (eq (first result) :compilation-result))
+            (setf (swank::compilation-result-successp result) nil))
+          result))))
+
+(defun eval-as-coalton (function string &rest args)
+  (call-as-coalton string (lambda () (apply function string args))))
+
+(defun compile-string-as-coalton (function string &rest args)
+  (call-as-coalton string (lambda () (compile-with-coalton-errors string (lambda () (apply function string args))))))
+
+(defun compile-file-as-coalton (function file &rest args)
+  (compile-with-coalton-errors (or (ignore-errors (uiop:read-file-string file)) "")
+                               (lambda () (apply function file args))))
+
 (defun accept-coalton-forms ()
-  (loop for name in '(swank::eval-region swank:eval-and-grab-output swank:compile-string-for-emacs)
+  (loop for (name wrapper) in '((swank::eval-region eval-as-coalton)
+                                (swank:eval-and-grab-output eval-as-coalton)
+                                (swank:compile-string-for-emacs compile-string-as-coalton)
+                                (swank:compile-file-for-emacs compile-file-as-coalton)
+                                (swank:documentation-symbol document-with-coalton-type))
         unless (sb-int:encapsulated-p name 'coalton)
-          do (sb-int:encapsulate name 'coalton
-                                 (lambda (function string &rest args)
-                                   (call-as-coalton string (lambda () (apply function string args))))))
-  (unless (sb-int:encapsulated-p 'swank:documentation-symbol 'coalton)
-    (sb-int:encapsulate 'swank:documentation-symbol 'coalton #'document-with-coalton-type)))
+          do (sb-int:encapsulate name 'coalton (symbol-function wrapper))))
 
 (defvar *checking* nil "True while a check compiles, which is not a compile the user asked for.")
 
@@ -430,6 +512,7 @@ first, as a build compiles them, so their packages and functions are known."
                    (setf (swank::compilation-result-notes result)
                          (append (swank::compilation-result-notes result) (reverse stopped))
                          (swank::compilation-result-successp result) nil))
+                 (name-the-checked-file result file source)
                  (let ((more (loop for f in *check-functions* append (funcall f source text))))
                    (when more
                      (setf (swank::compilation-result-notes result)
@@ -443,6 +526,20 @@ first, as a build compiles them, so their packages and functions are known."
               (dolist (user (copy-list (package-used-by-list p))) (unuse-package p user))
               (delete-package p)))
           (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore))))))
+
+(defun name-the-checked-file (result file source)
+  "Messages that name the scratch copy a check compiles, as Coalton's do, name
+SOURCE, the file being checked, instead."
+  (let ((copies (remove nil (list (ignore-errors (namestring (truename file))) (namestring file))))
+        (name (if source (namestring source) "this file")))
+    (dolist (note (swank::compilation-result-notes result))
+      (let ((message (getf note :message)))
+        (when (stringp message)
+          (dolist (copy copies)
+            (loop for at = (search copy message) then (search copy message :start2 (+ at (length name)))
+                  while at
+                  do (setf message (concatenate 'string (subseq message 0 at) name (subseq message (+ at (length copy)))))))
+          (setf (getf note :message) message))))))
 
 (defun compile-quietly (file output)
   "Compiles FILE to OUTPUT for what it defines, keeping none of its notes. An

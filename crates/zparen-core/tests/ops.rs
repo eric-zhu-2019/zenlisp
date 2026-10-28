@@ -455,6 +455,33 @@ async fn coalton_forms_run_inside_coalton_and_hovers_show_coalton_types() {
     assert!(success && notes.is_empty(), "{notes:?}");
     assert_eq!(eval("cl-user::*compiled*").await, "((COALTON:DEFINE W 3))");
 
+    // Coalton's own errors are notes on the expression it blames, and the form never reaches the debugger.
+    let form = "(coalton:coalton-toplevel\n  (coalton:define w (bad 1)))";
+    let Reply::Compiled { success, notes, .. } = run(cl(|package| Op::CompileForm {
+        form: form.into(),
+        buffer: "scratch".into(),
+        file: None,
+        offset: 100,
+        package,
+    }))
+    .await
+    else {
+        panic!()
+    };
+    assert!(!success, "{notes:?}");
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert_eq!(notes[0].severity, "error");
+    assert!(notes[0].message.starts_with("error: Ambiguous predicate"), "Coalton's words, not the compiler's: {}", notes[0].message);
+    assert_eq!(notes[0].location.as_ref().and_then(|l| l.offset), Some(100 + form.find("(bad").unwrap() as i64));
+    let text = format!("(in-package :cl-user)\n\n{form}\n");
+    let Reply::Compiled { notes, .. } = run(cl(|package| Op::CheckText { text: text.clone(), package, file: None })).await else { panic!() };
+    let offsets: Vec<_> = notes.iter().filter(|n| n.severity == "error").map(|n| n.location.as_ref().and_then(|l| l.offset)).collect();
+    assert_eq!(offsets, [Some(text.find("(bad").unwrap() as i64)], "{notes:?}");
+    let source = "/projects/typed/src/main.lisp";
+    let Reply::Compiled { notes, .. } = run(cl(|package| Op::CheckText { text: text.clone(), package, file: Some(source.into()) })).await else { panic!() };
+    let error = notes.iter().find(|n| n.severity == "error").expect("an error note");
+    assert!(error.message.contains(source) && !error.message.contains("zparen-check"), "the message names the file being checked: {}", error.message);
+
     let Reply::Text { text } = run(cl(|package| Op::Describe { symbol: "add2".into(), package })).await else { panic!() };
     assert!(text.contains("Coalton type: (INTEGER → INTEGER)") && !text.contains("Not documented"), "{text}");
     let Reply::Text { text } = run(cl(|package| Op::Describe { symbol: "car".into(), package })).await else { panic!() };

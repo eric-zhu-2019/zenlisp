@@ -66,12 +66,16 @@ const firstLine = (s: string, max = 400) => {
   return t.length > max ? `${t.slice(0, max)}…` : t;
 };
 
+const COALTON_BLOCK = /^\(\s*(coalton:)?coalton-toplevel[\s)]/i;
+
 /** Definitions compile from the buffer, as SLIME's C-c C-c does, so go-to-definition still finds them. */
 export function evalForm(view: EditorView): boolean {
   const form = currentForm(view);
   if (!form) return false;
   const def = view.state.selection.main.empty ? definitions(form.text)[0] : undefined;
   if (def && def.offset === 0) return compileDefinition(view, form, def.name);
+  // A Coalton block defines what it holds, and compiling reports its type errors as notes.
+  if (view.state.selection.main.empty && COALTON_BLOCK.test(form.text)) return compileDefinition(view, form, "coalton-toplevel");
   return evaluate(view, form);
 }
 
