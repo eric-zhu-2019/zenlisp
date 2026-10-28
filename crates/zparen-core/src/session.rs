@@ -66,6 +66,7 @@ impl SessionConfig {
         if let Some(home) = &self.sbcl_home {
             cmd.env("SBCL_HOME", home);
         }
+        use_macos_ca_bundle(&mut cmd);
         cmd
     }
 
@@ -444,6 +445,14 @@ fn dir_string(p: &std::path::Path) -> String {
         s.push('/');
     }
     s
+}
+
+/// ocicl looks for a Linux CA bundle unless told where macOS keeps one. Lisp
+/// passes this on to the ocicl it runs to fetch a missing system.
+pub fn use_macos_ca_bundle(cmd: &mut Command) {
+    if std::env::var_os("SSL_CERT_FILE").is_none() && Path::new("/etc/ssl/cert.pem").is_file() {
+        cmd.env("SSL_CERT_FILE", "/etc/ssl/cert.pem");
+    }
 }
 
 #[cfg(test)]

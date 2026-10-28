@@ -48,6 +48,20 @@ async fn errors_enter_the_debugger_and_abort_returns() {
     s.stop().await;
 }
 
+/// ocicl-runtime fetches a missing system by running ocicl, which needs to find macOS's CA bundle.
+#[tokio::test]
+async fn programs_lisp_runs_find_the_macos_ca_bundle() {
+    if std::env::var_os("SSL_CERT_FILE").is_some() || !std::path::Path::new("/etc/ssl/cert.pem").is_file() {
+        eprintln!("SSL_CERT_FILE is set or /etc/ssl/cert.pem is missing; nothing to check");
+        return;
+    }
+    let s = Session::start(&SessionConfig::new(resources())).await.unwrap();
+    let form = r#"(swank:eval-and-grab-output "(princ (uiop:run-program '(\"printenv\" \"SSL_CERT_FILE\") :output '(:string :stripped t) :ignore-error-status t))")"#;
+    let v = s.conn.rex(Sexp::parse(form).unwrap(), "CL-USER", Thread::T).await.unwrap();
+    assert_eq!(v.items()[0], Sexp::str("/etc/ssl/cert.pem"));
+    s.stop().await;
+}
+
 /// Runs when scripts/bundle-sbcl.sh has made a bundle: a Mac with no SBCL installed starts the bundled one.
 #[tokio::test]
 async fn the_bundled_sbcl_runs_where_none_is_installed() {

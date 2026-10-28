@@ -3,7 +3,7 @@ use crate::files;
 use crate::search;
 use crate::ops::{Op, Reply};
 use crate::project::{self, NewDeps, Project};
-use crate::session::{Session, SessionConfig};
+use crate::session::{use_macos_ca_bundle, Session, SessionConfig};
 use crate::sexp::Sexp;
 use crate::swank::{Debugger, Event, Thread};
 use serde::{Deserialize, Serialize};
@@ -1017,10 +1017,7 @@ fn list_dir(dir: &Path) -> Result<Vec<DirEntry>> {
 fn manager_command(argv: &[String]) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
-    // ocicl looks for a Linux CA bundle unless told where macOS keeps one.
-    if std::env::var_os("SSL_CERT_FILE").is_none() && Path::new("/etc/ssl/cert.pem").is_file() {
-        cmd.env("SSL_CERT_FILE", "/etc/ssl/cert.pem");
-    }
+    use_macos_ca_bundle(&mut cmd);
     cmd
 }
 
