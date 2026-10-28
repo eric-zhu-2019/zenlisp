@@ -22,6 +22,7 @@ async fn finish(rx: &mut tokio::sync::broadcast::Receiver<AppEvent>, task: &str)
             match rx.recv().await.unwrap() {
                 AppEvent::TaskOutput { task: t, text } if t == task => out.push_str(&text),
                 AppEvent::Lisp { event: zparen_core::swank::Event::Output { text, .. } } => out.push_str(&text),
+                AppEvent::Lisp { event: zparen_core::swank::Event::Debug(d) } => out.push_str(&format!("\n[debugger] {}\n", d.condition)),
                 AppEvent::TaskFinished { task: t, ok, message } if t == task => {
                     out.push_str(&message);
                     return ok;
@@ -33,6 +34,25 @@ async fn finish(rx: &mut tokio::sync::broadcast::Receiver<AppEvent>, task: &str)
     .await
     .map(|ok| (ok, out.clone()))
     .unwrap_or_else(|_| panic!("{task} did not finish. Output so far:\n{out}"))
+}
+
+/// Awaits `fut`, and when it hangs, fails naming `what` with what Lisp printed and where it stopped.
+async fn within<T>(rx: &mut tokio::sync::broadcast::Receiver<AppEvent>, what: &str, fut: impl std::future::Future<Output = T>) -> T {
+    use tokio::sync::broadcast::error::TryRecvError;
+    let Ok(v) = tokio::time::timeout(Duration::from_secs(90), fut).await else {
+        let mut seen = String::new();
+        loop {
+            match rx.try_recv() {
+                Ok(AppEvent::Lisp { event: zparen_core::swank::Event::Output { text, .. } }) => seen.push_str(&text),
+                Ok(AppEvent::Lisp { event: zparen_core::swank::Event::Debug(d) }) => seen.push_str(&format!("\n[debugger] {}\n", d.condition)),
+                Ok(AppEvent::Status(s)) => seen.push_str(&format!("\n[session] {:?}\n", s.session)),
+                Ok(_) | Err(TryRecvError::Lagged(_)) => {}
+                Err(_) => break,
+            }
+        }
+        panic!("{what} did not return. Lisp said:\n{seen}");
+    };
+    v
 }
 
 #[tokio::test]
@@ -109,12 +129,12 @@ async fn quicklisp_dependencies_load() {
     std::fs::write(root.join("app.lisp"), "(defpackage :ql-app (:use :cl)) (in-package :ql-app) (defun run () (alexandria:flatten '((1) (2 (3)))))").unwrap();
     let wb = workbench();
     let mut rx = wb.subscribe();
-    wb.handle(Request::OpenProject { root: root.display().to_string() }).await.unwrap();
-    wb.handle(Request::LoadSystem { name: "ql-app".into() }).await.unwrap();
+    within(&mut rx, "open project", wb.handle(Request::OpenProject { root: root.display().to_string() })).await.unwrap();
+    within(&mut rx, "load request", wb.handle(Request::LoadSystem { name: "ql-app".into() })).await.unwrap();
     let (ok, out) = finish(&mut rx, "load ql-app").await;
     assert!(ok, "{out}");
-    assert_eq!(eval(&wb, "(ql-app::run)").await, "(1 2 3)");
-    wb.stop().await;
+    assert_eq!(within(&mut rx, "eval", eval(&wb, "(ql-app::run)")).await, "(1 2 3)");
+    within(&mut rx, "stop", wb.stop()).await;
 }
 
 #[tokio::test]
