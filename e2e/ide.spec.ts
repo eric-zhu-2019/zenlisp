@@ -1513,6 +1513,8 @@ test("Run calls a system's entry point in the REPL", async ({ page }) => {
   await main.getByRole("button", { name: "Run" }).click();
   await expect(page.locator(".repl-buffer"), "Run loads the system and calls zen-run:main").toContainText("Hello, world!", { timeout: 60_000 });
   await expect(page.locator(".repl-buffer")).toContainText('(uiop:call-function "zen-run:main")');
+  await page.locator(".status-pill").click();
+  await expect(page.locator(".repl-buffer"), "a new Lisp loads what Run loaded").toContainText("Loading zen-run, as in the last session", { timeout: 60_000 });
 });
 
 test("the sidebar and the right panel resize by their edges, and keep their widths", async ({ page }) => {

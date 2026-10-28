@@ -9,7 +9,7 @@ import type { TestNode } from "./protocol/TestNode";
 import type { Thread } from "./protocol/Thread";
 import { activeEditor, viewPath } from "./editor/commands";
 import { forgetDocs } from "./editor/hover";
-import { pickFolder, rememberProject } from "./platform";
+import { pickFolder, rememberLoaded, rememberProject } from "./platform";
 import { markTour, offerTour } from "./tour";
 import type { Debugger } from "./protocol/Debugger";
 import type { EditorContext } from "./protocol/EditorContext";
@@ -315,11 +315,19 @@ function runTask(task: string, req: Request) {
   return request(req);
 }
 
-/** Runs a system's entry point in the REPL, loading the system first, as its built program would start. */
-export function runSystem(system: SystemInfo) {
+/**
+ * Runs a system's entry point in the REPL, loading the system first, as its
+ * built program would start. Once it returns, a system it loaded loads again
+ * in the next session, as with Load.
+ */
+export async function runSystem(system: SystemInfo) {
   if (!system.entryPoint) return;
   set({ bottom: "repl" });
-  replEval(`(progn (zparen:load-system ${lispString(system.name)}) (uiop:call-function ${lispString(system.entryPoint)}))`);
+  const name = lispString(system.name);
+  const root = get().status.project?.root;
+  await replEval(`(progn (zparen:load-system ${name}) (uiop:call-function ${lispString(system.entryPoint)}))`).catch(() => {});
+  const r = await backend.request({ type: "lisp", op: { op: "eval", form: `(and (asdf:component-loaded-p ${name}) t)`, package: "COMMON-LISP-USER" } }).catch(() => null);
+  if (root && root === get().status.project?.root && r?.type === "lisp" && r.reply.kind === "evaluated" && r.reply.value === "T") rememberLoaded(root, system.name);
 }
 
 export const loadSystem = (name: string) => runTask(`load ${name}`, { type: "loadSystem", name });
