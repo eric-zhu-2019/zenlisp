@@ -275,7 +275,9 @@ pub fn create(parent: &Path, name: &str, deps: NewDeps, language: NewLanguage) -
     // Coalton's own file type, .ct, is Lisp syntax that coalton-asdf compiles with Coalton's reader.
     let (asdf_extensions, depends, uses, main_kind) = match language {
         NewLanguage::Lisp => ("", "", "#:cl", ":file"),
-        NewLanguage::Coalton => ("  :defsystem-depends-on (\"coalton-asdf\")\n", "\"coalton\"", "#:coalton #:coalton-prelude", ":ct-file"),
+        // coalton-asdf ships inside the coalton release, so a manager that fetches by
+        // release, as ocicl does, finds it only once coalton is there.
+        NewLanguage::Coalton => ("  :defsystem-depends-on (\"coalton\" \"coalton-asdf\")\n", "\"coalton\"", "#:coalton #:coalton-prelude", ":ct-file"),
     };
     std::fs::create_dir_all(root.join("src"))?;
     std::fs::create_dir_all(root.join("tests"))?;
@@ -417,7 +419,7 @@ mod tests {
         let parent = tmp("create-coalton");
         let root = create(&parent, "co-zen", NewDeps::Quicklisp, NewLanguage::Coalton).unwrap();
         let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
-        assert!(read("co-zen.asd").contains("  :version \"0.1.0\"\n  :defsystem-depends-on (\"coalton-asdf\")\n  :depends-on (\"coalton\")"));
+        assert!(read("co-zen.asd").contains("  :version \"0.1.0\"\n  :defsystem-depends-on (\"coalton\" \"coalton-asdf\")\n  :depends-on (\"coalton\")"));
         assert!(read("src/package.lisp").contains("(:use #:coalton #:coalton-prelude)"));
         assert!(read("co-zen.asd").contains("(:ct-file \"main\" :depends-on (\"package\"))"), "Coalton code is in Coalton's file type");
         assert!(!root.join("src/main.lisp").exists());
