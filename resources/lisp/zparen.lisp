@@ -21,17 +21,23 @@ where ASDF looks for it, not beside the source, so a later load uses it."
           (declare (ignore options))
           (ensure-directories-exist (asdf:apply-output-translations (compile-file-pathname input))))))
 
-(defun start-server (&key (debug-code t) plugins)
-  "Starts Swank on a free port and announces it as ZPAREN-PORT <n>. PLUGINS
-is the plugins folder, whose plugins load first."
-  (sb-ext:enable-debugger)
+(defun compile-as-session (debug-code)
+  "Compiles from here on as a session does, into the fasls a session looks for.
+A startup image loads its systems this way, so a session started from it finds
+their fasls current and does not load them again."
   ;; Code compiled during development keeps its locals and can be single-stepped.
   ;; Debug 2 leaves step instrumentation off, and a merged tail call hides the
   ;; stepped frame, so it takes debug 3. Builds run in a separate process with
   ;; their own policy.
   (when debug-code
     (sb-ext:restrict-compiler-policy 'debug 3))
-  (use-own-fasl-cache debug-code)
+  (use-own-fasl-cache debug-code))
+
+(defun start-server (&key (debug-code t) plugins)
+  "Starts Swank on a free port and announces it as ZPAREN-PORT <n>. PLUGINS
+is the plugins folder, whose plugins load first."
+  (sb-ext:enable-debugger)
+  (compile-as-session debug-code)
   (setf swank-repl::*globally-redirect-io* t)
   (lock-image-changes)
   (accept-coalton-forms)

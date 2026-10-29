@@ -193,6 +193,8 @@ async fn a_dying_lisp_says_why_and_a_saved_image_starts_with_the_project_loaded(
     assert!(message.starts_with("Lisp exited with code 3."), "{message}");
     assert!(message.contains("about to go"), "the report has SBCL's last output: {message}");
 
+    let main = parent.join("imaged-zen/src/main.lisp");
+    std::fs::write(&main, std::fs::read_to_string(&main).unwrap() + "\n(defvar cl-user::*image-loads* 0)\n(incf cl-user::*image-loads*)\n").unwrap();
     wb.handle(Request::SaveImage { systems: vec!["imaged-zen".into()] }).await.unwrap();
     let (ok, out) = finish(&mut rx, "save startup image").await;
     assert!(ok, "{out}");
@@ -205,14 +207,24 @@ async fn a_dying_lisp_says_why_and_a_saved_image_starts_with_the_project_loaded(
     let probe = Op::Eval { form: r#"(and (asdf:component-loaded-p "imaged-zen") (fboundp (find-symbol "GREET" "IMAGED-ZEN")) t)"#.into(), package: "CL-USER".into() };
     let Response::Lisp { reply: Reply::Evaluated { value, .. } } = wb.handle(Request::Lisp { op: probe }).await.unwrap() else { panic!() };
     assert_eq!(value, "T", "the project is loaded before anything is evaluated");
+    wb.handle(Request::LoadSystem { name: "imaged-zen".into() }).await.unwrap();
+    let (ok, out) = finish(&mut rx, "load imaged-zen").await;
+    assert!(ok, "{out}");
+    let loads = Op::Eval { form: "cl-user::*image-loads*".into(), package: "CL-USER".into() };
+    let Response::Lisp { reply: Reply::Evaluated { value, .. } } = wb.handle(Request::Lisp { op: loads }).await.unwrap() else { panic!() };
+    assert_eq!(value, "1", "loading finds the image's fasls current, so Coalton's locked packages are not loaded twice");
 
-    let main = parent.join("imaged-zen/src/main.lisp");
     std::fs::write(&main, std::fs::read_to_string(&main).unwrap() + "\n(defun later () 2)\n").unwrap();
     let Response::Image { image: Some(info) } = wb.handle(Request::Image).await.unwrap() else { panic!() };
     assert!(info.stale.as_deref().is_some_and(|s| s.contains("main.lisp")), "a changed file makes the image old: {info:?}");
     assert!(info.used, "Lisp still starts from it, and the reload compiles the change: {info:?}");
 
     let manifest = PathBuf::from(&info.path).with_extension("json");
+    let saved = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(&manifest, saved.replace(",\"debug_code\":true", "")).unwrap();
+    let Response::Image { image: Some(info) } = wb.handle(Request::Image).await.unwrap() else { panic!() };
+    assert!(info.stale.as_deref().is_some_and(|s| s.contains("earlier ZParen")) && !info.used, "an image from before it compiled as a session is not used: {info:?}");
+    std::fs::write(&manifest, saved).unwrap();
     let other_core = std::fs::read_to_string(&manifest).unwrap().replacen("zparen-", "zparen-0", 1);
     std::fs::write(&manifest, other_core).unwrap();
     let Response::Image { image: Some(info) } = wb.handle(Request::Image).await.unwrap() else { panic!() };

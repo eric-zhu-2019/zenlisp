@@ -235,6 +235,9 @@ struct ImageManifest {
     core: String,
     /// Each project file the image holds, relative to the root, with its size and modification time in nanoseconds.
     files: std::collections::BTreeMap<String, (u64, u128)>,
+    /// Whether it compiled as a session with Compile for debugging on does. Absent in images saved before it was recorded.
+    #[serde(default)]
+    debug_code: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, PartialEq)]
@@ -417,7 +420,7 @@ impl Workbench {
             cfg.cwd = PathBuf::from(&p.root);
             let image = self.image_path(p);
             if let Ok(core) = crate::session::core_path(&cfg).await
-                && image_info(&image, &core, Path::new(&p.root)).is_some_and(|i| i.used)
+                && image_info(&image, &core, Path::new(&p.root), cfg.debug_code).is_some_and(|i| i.used)
             {
                 cfg.core = Some(image);
             }
@@ -706,8 +709,9 @@ impl Workbench {
             }
             Request::Image => {
                 let p = self.project().await?;
-                let core = crate::session::core_path(&self.configured()).await.map_err(|e| e.to_string())?;
-                Ok(Response::Image { image: image_info(&self.image_path(&p), &core, Path::new(&p.root)) })
+                let cfg = self.configured();
+                let core = crate::session::core_path(&cfg).await.map_err(|e| e.to_string())?;
+                Ok(Response::Image { image: image_info(&self.image_path(&p), &core, Path::new(&p.root), cfg.debug_code) })
             }
             Request::DeleteImage => {
                 let p = self.project().await?;
@@ -745,6 +749,8 @@ impl Workbench {
                 let started = std::time::SystemTime::now();
                 let mut cmd = cfg.sbcl_command();
                 cmd.arg("--core").arg(&core).args(["--noinform", "--non-interactive", "--no-userinit"]);
+                let debug_code = cfg.debug_code;
+                cmd.arg("--eval").arg(Sexp::list([Sexp::sym("zparen::compile-as-session"), Sexp::sym(if debug_code { "t" } else { "nil" })]).to_string());
                 for form in p.setup_forms() {
                     cmd.arg("--eval").arg(form.to_string());
                 }
@@ -780,7 +786,7 @@ impl Workbench {
                             (f, fp)
                         })
                         .collect();
-                    let manifest = ImageManifest { core: core_name, files };
+                    let manifest = ImageManifest { core: core_name, files, debug_code: Some(debug_code) };
                     if std::fs::rename(&tmp, &path).is_ok() {
                         let _ = std::fs::write(path.with_extension("json"), serde_json::to_string(&manifest).unwrap_or_default());
                     }
@@ -1037,7 +1043,7 @@ fn load_options(data_dir: &Path) -> LispOptions {
 }
 
 /// The image at `path`, and whether it still matches the base core `core` and the project at `root`.
-fn image_info(path: &Path, core: &Path, root: &Path) -> Option<ImageInfo> {
+fn image_info(path: &Path, core: &Path, root: &Path, debug_code: bool) -> Option<ImageInfo> {
     let meta = std::fs::metadata(path).ok()?;
     let saved = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
     let manifest: Option<ImageManifest> = std::fs::read_to_string(path.with_extension("json")).ok().and_then(|s| serde_json::from_str(&s).ok());
@@ -1046,6 +1052,15 @@ fn image_info(path: &Path, core: &Path, root: &Path) -> Option<ImageInfo> {
         Some(m) if Some(m.core.as_str()) != core.file_name().and_then(|n| n.to_str()) => {
             (Some("It was built on another version of ZParen or SBCL.".to_string()), false)
         }
+        // Its fasls are where a session with that setting looks, and a session with the
+        // other would compile and load its systems again, which Coalton's locked packages refuse.
+        Some(m) if m.debug_code != Some(debug_code) => (
+            Some(match m.debug_code {
+                None => "It was saved by an earlier ZParen, which compiled it apart from the session.".to_string(),
+                Some(_) => "It was saved with Compile for debugging set the other way.".to_string(),
+            }),
+            false,
+        ),
         Some(m) => {
             let mut changed: Vec<String> = m.files.iter().filter(|(f, fp)| fingerprint(&root.join(f)) != Some(**fp)).map(|(f, _)| f.clone()).collect();
             changed.extend(root_files(root).filter(|f| !m.files.contains_key(f)));
