@@ -82,6 +82,8 @@ Subagents took on separate pieces. Each coding agent worked in its own git workt
   the HyperSpec.
 - **Projects.** ASDF systems with Quicklisp, qlot, ocicl or vendored
   dependencies, a dependency editor, and startup images.
+- **Coalton.** New Coalton projects, Coalton forms in the REPL and the editor,
+  Coalton types on hover, and type errors on the expression Coalton blames.
 - **Editor.** Vim keys, SLIME's Emacs sequences, parinfer, structural editing,
   split panes, a git gutter with inline diffs, word wrap (⌥Z), Markdown preview
   (⇧⌘V), and a choice of editor and interface fonts.
@@ -132,8 +134,9 @@ menu under the project's name in the title bar. Leaving a project with unsaved
 files asks to save them first.
 
 A new project has an ASDF system, a test system, and an executable build
-target. It takes its dependencies from Quicklisp, or from ocicl with each
-version pinned in `ocicl.csv`.
+target. Its language is Common Lisp or [Coalton](#coalton). It takes its
+dependencies from Quicklisp, or from ocicl with each version pinned in
+`ocicl.csv`.
 To use ocicl, run `brew install ocicl` and `ocicl setup` once.
 
 ZParen finds the dependency manager from the files in the project root:
@@ -162,6 +165,48 @@ has four buttons:
 - **Test** runs `asdf:test-system`.
 - **Build** runs `asdf:make` in a separate SBCL and streams the output to the
   **Output** panel.
+
+## Coalton
+
+[Coalton](https://coalton-lang.github.io) is a statically typed language that
+runs inside Common Lisp. ZParen edits, checks and runs Coalton code in the same
+live image as Lisp code.
+
+To start a Coalton project:
+
+1. Choose **New Project**, then choose **Coalton** in the **Language** row.
+2. Choose **Create**. A Coalton project always uses ocicl, so set up ocicl first.
+3. Wait for the first open to finish. ocicl downloads Coalton, and ASDF
+   compiles it. This takes some minutes, and later opens use the compiled files.
+
+The new project keeps its code in `src/main.ct`, Coalton's own file type. Its
+`.asd` names `"coalton"` and `"coalton-asdf"` in `:defsystem-depends-on`, and
+lists `main` as a `:ct-file`. Quicklisp's Coalton is from 2024 and cannot read
+`.ct` files, so the dialog does not offer Quicklisp for Coalton.
+
+In the editor and the REPL:
+
+- **Run Coalton forms.** ⌘Enter on a `(coalton-toplevel …)` block compiles it.
+  A definition typed alone, such as `define`, `declare` or `define-type`, runs
+  inside `coalton-toplevel`. An expression typed alone, such as `match` or
+  `let`, runs inside `coalton`.
+- **See types.** Hover and `K` show the Coalton type of a name, such as
+  `∀ :A. NUM :A ⇒ :A → :A`.
+- **Fix type errors.** The check as you type, ⌘Enter, and a file compile mark
+  the expression Coalton blames. The note shows Coalton's message without its
+  copy of the source. **Copy** and **Ask AI to fix** give the full message.
+- **Color.** Coalton's operators, such as `define`, `match` and `declare`, have
+  their own color. ZParen reads `.ct` files as Lisp source.
+
+Save a startup image after the first load. Lisp then starts with Coalton
+loaded, and does not compile it again.
+
+Some limits apply:
+
+- A type error in a form typed in the REPL still opens the debugger.
+- When a file compile finds a type error, the forms after it in the file do
+  not load.
+- ZParen does not read Coalton's native `.coal` syntax.
 
 ## Use Claude or OpenAI
 
