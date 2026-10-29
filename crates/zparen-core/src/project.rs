@@ -250,6 +250,14 @@ impl Project {
     }
 }
 
+/// The file a new project's code starts in, relative to its root.
+fn main_file(language: NewLanguage) -> &'static str {
+    match language {
+        NewLanguage::Lisp => "src/main.lisp",
+        NewLanguage::Coalton => "src/main.ct",
+    }
+}
+
 /// Creates a new ASDF project with a package, a main file and a test system,
 /// and for ocicl an empty `ocicl.csv` that `ocicl install` fills.
 pub fn create(parent: &Path, name: &str, deps: NewDeps, language: NewLanguage) -> std::io::Result<PathBuf> {
@@ -264,9 +272,10 @@ pub fn create(parent: &Path, name: &str, deps: NewDeps, language: NewLanguage) -
     if root.exists() {
         return Err(std::io::Error::other(format!("{} already exists", root.display())));
     }
-    let (asdf_extensions, depends, uses) = match language {
-        NewLanguage::Lisp => ("", "", "#:cl"),
-        NewLanguage::Coalton => ("  :defsystem-depends-on (\"coalton-asdf\")\n", "\"coalton\"", "#:coalton #:coalton-prelude"),
+    // Coalton's own file type, .ct, is Lisp syntax that coalton-asdf compiles with Coalton's reader.
+    let (asdf_extensions, depends, uses, main_kind) = match language {
+        NewLanguage::Lisp => ("", "", "#:cl", ":file"),
+        NewLanguage::Coalton => ("  :defsystem-depends-on (\"coalton-asdf\")\n", "\"coalton\"", "#:coalton #:coalton-prelude", ":ct-file"),
     };
     std::fs::create_dir_all(root.join("src"))?;
     std::fs::create_dir_all(root.join("tests"))?;
@@ -280,7 +289,7 @@ pub fn create(parent: &Path, name: &str, deps: NewDeps, language: NewLanguage) -
 {asdf_extensions}  :depends-on ({depends})
   :components ((:module "src"
                 :components ((:file "package")
-                             (:file "main" :depends-on ("package")))))
+                             ({main_kind} "main" :depends-on ("package")))))
   :in-order-to ((test-op (test-op "{name}/tests")))
   :build-operation "program-op"
   :build-pathname "bin/{name}"
@@ -298,7 +307,7 @@ pub fn create(parent: &Path, name: &str, deps: NewDeps, language: NewLanguage) -
             format!("(defpackage #:{name}\n  (:use {uses})\n  (:export #:main #:greet))\n"),
         ),
         (
-            "src/main.lisp".into(),
+            main_file(language).into(),
             match language {
                 NewLanguage::Lisp => format!(
                     r#"(in-package #:{name})
@@ -410,11 +419,14 @@ mod tests {
         let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
         assert!(read("co-zen.asd").contains("  :version \"0.1.0\"\n  :defsystem-depends-on (\"coalton-asdf\")\n  :depends-on (\"coalton\")"));
         assert!(read("src/package.lisp").contains("(:use #:coalton #:coalton-prelude)"));
-        assert!(read("src/main.lisp").contains("(coalton-toplevel\n  (declare greet (String -> String))"));
+        assert!(read("co-zen.asd").contains("(:ct-file \"main\" :depends-on (\"package\"))"), "Coalton code is in Coalton's file type");
+        assert!(!root.join("src/main.lisp").exists());
+        assert!(read("src/main.ct").contains("(coalton-toplevel\n  (declare greet (String -> String))"));
         assert!(read("tests/main.lisp").contains("(co-zen:greet \"Lisp\")"), "tests call the Coalton function from Lisp");
         let plain = create(&parent, "lisp-zen", NewDeps::Quicklisp, NewLanguage::Lisp).unwrap();
         let plain_asd = std::fs::read_to_string(plain.join("lisp-zen.asd")).unwrap();
         assert!(plain_asd.contains("  :version \"0.1.0\"\n  :depends-on ()") && !plain_asd.contains("defsystem-depends-on"), "{plain_asd}");
+        assert!(plain_asd.contains("(:file \"main\" :depends-on (\"package\"))") && plain.join("src/main.lisp").is_file());
     }
 
     #[test]

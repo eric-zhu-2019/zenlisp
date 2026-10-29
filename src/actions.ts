@@ -252,7 +252,7 @@ export async function newProject(parent: string, name: string, deps: NewDeps = "
   offerTour();
   await Promise.all([refreshSystems(), refreshStatus(), refreshPackages()]);
   void refreshGit();
-  await openFile(`${r.project.root}/src/main.lisp`);
+  await openFile(`${r.project.root}/src/main.${language === "coalton" ? "ct" : "lisp"}`);
   return true;
 }
 

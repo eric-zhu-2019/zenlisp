@@ -1384,7 +1384,8 @@ test("a new project can be written in Coalton", async ({ page }) => {
   await expect(page.locator(".dialog-hint", { hasText: "coalton-toplevel" })).toBeVisible();
   await page.getByRole("button", { name: "Create" }).click();
   const root = join(parent, "zen-typed");
-  await expect(page.locator(".editor-host .cm-content"), "main.lisp opens on its Coalton code").toContainText("(declare greet (String -> String))", { timeout: 30_000 });
+  await expect(page.locator(".tab.active"), "its code is in Coalton's file type").toHaveText(/main\.ct/);
+  await expect(page.locator(".editor-host .cm-content"), "main.ct opens on its Coalton code").toContainText("(declare greet (String -> String))", { timeout: 30_000 });
   expect(readFileSync(join(root, "zen-typed.asd"), "utf8")).toContain(':depends-on ("coalton")');
   expect(readFileSync(join(root, "src/package.lisp"), "utf8")).toContain("(:use #:coalton #:coalton-prelude)");
 });
