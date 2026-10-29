@@ -264,9 +264,9 @@ pub fn create(parent: &Path, name: &str, deps: NewDeps, language: NewLanguage) -
     if root.exists() {
         return Err(std::io::Error::other(format!("{} already exists", root.display())));
     }
-    let (depends, uses) = match language {
-        NewLanguage::Lisp => ("", "#:cl"),
-        NewLanguage::Coalton => ("\"coalton\"", "#:coalton #:coalton-prelude"),
+    let (asdf_extensions, depends, uses) = match language {
+        NewLanguage::Lisp => ("", "", "#:cl"),
+        NewLanguage::Coalton => ("  :defsystem-depends-on (\"coalton-asdf\")\n", "\"coalton\"", "#:coalton #:coalton-prelude"),
     };
     std::fs::create_dir_all(root.join("src"))?;
     std::fs::create_dir_all(root.join("tests"))?;
@@ -277,7 +277,7 @@ pub fn create(parent: &Path, name: &str, deps: NewDeps, language: NewLanguage) -
                 r#"(defsystem "{name}"
   :description "{name}"
   :version "0.1.0"
-  :depends-on ({depends})
+{asdf_extensions}  :depends-on ({depends})
   :components ((:module "src"
                 :components ((:file "package")
                              (:file "main" :depends-on ("package")))))
@@ -408,12 +408,13 @@ mod tests {
         let parent = tmp("create-coalton");
         let root = create(&parent, "co-zen", NewDeps::Quicklisp, NewLanguage::Coalton).unwrap();
         let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
-        assert!(read("co-zen.asd").contains(":depends-on (\"coalton\")"));
+        assert!(read("co-zen.asd").contains("  :version \"0.1.0\"\n  :defsystem-depends-on (\"coalton-asdf\")\n  :depends-on (\"coalton\")"));
         assert!(read("src/package.lisp").contains("(:use #:coalton #:coalton-prelude)"));
         assert!(read("src/main.lisp").contains("(coalton-toplevel\n  (declare greet (String -> String))"));
         assert!(read("tests/main.lisp").contains("(co-zen:greet \"Lisp\")"), "tests call the Coalton function from Lisp");
         let plain = create(&parent, "lisp-zen", NewDeps::Quicklisp, NewLanguage::Lisp).unwrap();
-        assert!(std::fs::read_to_string(plain.join("lisp-zen.asd")).unwrap().contains(":depends-on ()"));
+        let plain_asd = std::fs::read_to_string(plain.join("lisp-zen.asd")).unwrap();
+        assert!(plain_asd.contains("  :version \"0.1.0\"\n  :depends-on ()") && !plain_asd.contains("defsystem-depends-on"), "{plain_asd}");
     }
 
     #[test]
