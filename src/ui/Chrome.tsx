@@ -249,6 +249,8 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
   const [language, setLanguage] = useState<NewLanguage>("lisp");
   const [ocicl, setOcicl] = useState<{ ready: boolean; missing: string } | null>(null);
   const [error, setError] = useState("");
+  // Opening a new project waits for its Lisp to start, minutes when Coalton downloads first.
+  const [creating, setCreating] = useState(false);
   const nameOk = /^[a-z][a-z0-9-]*$/.test(name);
   const valid = nameOk && parent && (deps !== "ocicl" || ocicl?.ready);
 
@@ -268,10 +270,13 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
         onMouseDown={(e) => e.stopPropagation()}
         onSubmit={async (e) => {
           e.preventDefault();
+          setCreating(true);
           try {
             if (await actions.newProject(parent, name, deps, language)) onClose();
           } catch (err) {
             setError(String(err instanceof Error ? err.message : err));
+          } finally {
+            setCreating(false);
           }
         }}
       >
@@ -334,8 +339,8 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
           <button type="button" className="btn" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="btn primary" disabled={!valid}>
-            Create
+          <button type="submit" className="btn primary" disabled={!valid || creating}>
+            {creating ? "Creating…" : "Create"}
           </button>
         </div>
       </form>

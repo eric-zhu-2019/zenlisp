@@ -1389,6 +1389,23 @@ test("a new Coalton project takes its dependencies from ocicl", async ({ page })
   await page.getByRole("button", { name: "Cancel" }).click();
 });
 
+test("a project being created is not created again by a second Create", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
+  await fresh(page);
+  let creates = 0;
+  page.on("websocket", (ws) => ws.on("framesent", (f) => (creates += /"type":"newProject"/.test(String(f.payload)) ? 1 : 0)));
+  await page.reload();
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-once");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByRole("button", { name: "Creating…" }), "the dialog shows the create is under way").toBeDisabled();
+  await page.getByPlaceholder("my-app").press("Enter");
+  await expect(page.locator(".tab.active")).toHaveText(/main\.lisp/, { timeout: 60_000 });
+  await expect(page.locator(".dialog"), "the dialog closes").toHaveCount(0);
+  expect(creates, "one request creates the project").toBe(1);
+});
+
 test("a Coalton type error from ⌘Enter is a note on the expression Coalton blames, not the debugger", async ({ page }) => {
   const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
   await fresh(page);
