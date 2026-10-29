@@ -507,7 +507,12 @@ first, as a build compiles them, so their packages and functions are known."
                                                      (push (check-error-note c file text) stopped)
                                                      (let ((r (or (find-restart 'continue c) (find-restart 'abort c))))
                                                        (when r (invoke-restart r))))))
-                               (swank:compile-file-for-emacs (namestring file) nil))))
+                               ;; Compiled under SOURCE's name, what it defines at compile time
+                               ;; replaces SOURCE's definitions without a redefinition note.
+                               ;; WITH-COMPILATION-UNIT would name it too, but would hold its
+                               ;; undefined-function warnings until after Swank stops listening.
+                               (let ((sb-c::*source-namestring* (if source (namestring source) sb-c::*source-namestring*)))
+                                 (swank:compile-file-for-emacs (namestring file) nil)))))
                  (when stopped
                    (setf (swank::compilation-result-notes result)
                          (append (swank::compilation-result-notes result) (reverse stopped))

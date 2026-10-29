@@ -320,6 +320,29 @@ async fn checking_text_reports_notes_without_defining_anything() {
 }
 
 #[tokio::test]
+async fn checking_a_loaded_file_does_not_report_it_redefining_itself() {
+    let s = start().await;
+    let c = &s.conn;
+    let dir = std::env::temp_dir().join(format!("zparen-redefine-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // Coalton's types expand to definitions like this one, made while compiling.
+    let text = "(eval-when (:compile-toplevel :load-toplevel :execute)\n  (defun rd-helper () 1))\n\n(defun rd-user () (rd-missing))\n";
+    let file = dir.join("loaded.lisp");
+    std::fs::write(&file, text).unwrap();
+    Op::CompileFile { path: file.to_string_lossy().into(), load: true }.run(c).await.unwrap();
+    let check = |file: &std::path::Path| cl(|package| Op::CheckText { text: text.into(), package, file: Some(file.to_string_lossy().into()) });
+
+    let Reply::Compiled { notes, .. } = check(&file).run(c).await.unwrap() else { panic!() };
+    assert!(!notes.iter().any(|n| n.severity == "redefinition"), "{notes:?}");
+    assert!(notes.iter().any(|n| n.message.contains("RD-MISSING")), "other notes stay: {notes:?}");
+
+    let Reply::Compiled { notes, .. } = check(&dir.join("other.lisp")).run(c).await.unwrap() else { panic!() };
+    assert!(notes.iter().any(|n| n.severity == "redefinition" && n.message.contains("RD-HELPER")), "another file's redefinition is still reported: {notes:?}");
+    s.stop().await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
 async fn names_being_typed_are_packages_or_systems_where_the_code_says_so() {
     let s = start().await;
     // `^` marks the cursor; the text before it is what the editor sends.
