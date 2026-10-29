@@ -1382,7 +1382,8 @@ test("a new Coalton project takes its dependencies from ocicl", async ({ page })
   await expect(page.locator(".dialog-hint", { hasText: "coalton-toplevel" })).toBeVisible();
   await expect(page.getByRole("radio", { name: "ocicl" }), "Coalton picks ocicl").toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("radio", { name: "Quicklisp" }), "and Quicklisp's 2024 Coalton is not offered").toBeDisabled();
-  await expect(page.locator(".dialog-hint", { hasText: "cannot read .ct files" })).toBeVisible();
+  // Without ocicl set up, as on CI, the hint says how to set it up instead.
+  await expect(page.locator(".dialog-hint", { hasText: /cannot read \.ct files|ocicl is not set up/ })).toBeVisible();
   await page.getByRole("radio", { name: "Common Lisp" }).click();
   await expect(page.getByRole("radio", { name: "Quicklisp" }), "Common Lisp can use Quicklisp again").toBeEnabled();
   // Creating one would download and compile Coalton, which the Rust test of the template avoids.
