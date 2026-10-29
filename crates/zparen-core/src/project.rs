@@ -97,6 +97,9 @@ pub unsafe fn use_tool_path() {
     unsafe { std::env::set_var("PATH", tool_path(&path, &home())) };
 }
 
+/// Quicklisp's Coalton is the 2024-10-12 release, whose coalton-asdf has no .ct files.
+pub const COALTON_NEEDS_OCICL: &str = "Coalton projects use ocicl, whose Coalton can read the project's .ct files.";
+
 pub const OCICL_MISSING: &str = "ocicl is not set up. Install it with `brew install ocicl`, then run `ocicl setup`.";
 
 pub fn ocicl_runtime() -> Option<PathBuf> {
@@ -265,6 +268,9 @@ pub fn create(parent: &Path, name: &str, deps: NewDeps, language: NewLanguage) -
     if !valid {
         return Err(std::io::Error::other("project names use lowercase letters, digits and dashes"));
     }
+    if language == NewLanguage::Coalton && deps != NewDeps::Ocicl {
+        return Err(std::io::Error::other(COALTON_NEEDS_OCICL));
+    }
     if deps == NewDeps::Ocicl && ocicl_runtime().is_none() {
         return Err(std::io::Error::other(OCICL_MISSING));
     }
@@ -417,18 +423,25 @@ mod tests {
     #[test]
     fn a_coalton_project_depends_on_coalton_and_defines_its_code_in_coalton() {
         let parent = tmp("create-coalton");
-        let root = create(&parent, "co-zen", NewDeps::Quicklisp, NewLanguage::Coalton).unwrap();
-        let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
-        assert!(read("co-zen.asd").contains("  :version \"0.1.0\"\n  :defsystem-depends-on (\"coalton\" \"coalton-asdf\")\n  :depends-on (\"coalton\")"));
-        assert!(read("src/package.lisp").contains("(:use #:coalton #:coalton-prelude)"));
-        assert!(read("co-zen.asd").contains("(:ct-file \"main\" :depends-on (\"package\"))"), "Coalton code is in Coalton's file type");
-        assert!(!root.join("src/main.lisp").exists());
-        assert!(read("src/main.ct").contains("(coalton-toplevel\n  (declare greet (String -> String))"));
-        assert!(read("tests/main.lisp").contains("(co-zen:greet \"Lisp\")"), "tests call the Coalton function from Lisp");
+        let quicklisp = create(&parent, "ql-zen", NewDeps::Quicklisp, NewLanguage::Coalton).unwrap_err();
+        assert_eq!(quicklisp.to_string(), COALTON_NEEDS_OCICL);
+        assert!(!parent.join("ql-zen").exists(), "nothing is created");
         let plain = create(&parent, "lisp-zen", NewDeps::Quicklisp, NewLanguage::Lisp).unwrap();
         let plain_asd = std::fs::read_to_string(plain.join("lisp-zen.asd")).unwrap();
         assert!(plain_asd.contains("  :version \"0.1.0\"\n  :depends-on ()") && !plain_asd.contains("defsystem-depends-on"), "{plain_asd}");
         assert!(plain_asd.contains("(:file \"main\" :depends-on (\"package\"))") && plain.join("src/main.lisp").is_file());
+        let Ok(root) = create(&parent, "co-zen", NewDeps::Ocicl, NewLanguage::Coalton) else {
+            assert!(ocicl_runtime().is_none(), "only a Mac without ocicl set up cannot make one");
+            return;
+        };
+        let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
+        assert!(read("co-zen.asd").contains("  :version \"0.1.0\"\n  :defsystem-depends-on (\"coalton\" \"coalton-asdf\")\n  :depends-on (\"coalton\")"));
+        assert!(read("co-zen.asd").contains("(:ct-file \"main\" :depends-on (\"package\"))"), "Coalton code is in Coalton's file type");
+        assert!(root.join("ocicl.csv").is_file());
+        assert!(!root.join("src/main.lisp").exists());
+        assert!(read("src/main.ct").contains("(coalton-toplevel\n  (declare greet (String -> String))"));
+        assert!(read("src/package.lisp").contains("(:use #:coalton #:coalton-prelude)"));
+        assert!(read("tests/main.lisp").contains("(co-zen:greet \"Lisp\")"), "tests call the Coalton function from Lisp");
     }
 
     #[test]

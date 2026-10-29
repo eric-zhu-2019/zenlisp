@@ -1373,21 +1373,20 @@ test("a file's check compiles the files it depends on first, so their functions 
   await expect(page.locator(".presentation", { hasText: '"hello built"' })).toBeVisible();
 });
 
-test("a new project can be written in Coalton", async ({ page }) => {
-  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
+test("a new Coalton project takes its dependencies from ocicl", async ({ page }) => {
   await fresh(page);
   await page.getByRole("button", { name: "New Project" }).click();
-  await page.getByPlaceholder("my-app").fill("zen-typed");
-  await page.getByPlaceholder("/Users/you/projects").fill(parent);
   await expect(page.getByRole("radio", { name: "Common Lisp" }), "Common Lisp stays the default").toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: "Quicklisp" }), "with Quicklisp").toHaveAttribute("aria-checked", "true");
   await page.getByRole("radio", { name: "Coalton" }).click();
   await expect(page.locator(".dialog-hint", { hasText: "coalton-toplevel" })).toBeVisible();
-  await page.getByRole("button", { name: "Create" }).click();
-  const root = join(parent, "zen-typed");
-  await expect(page.locator(".tab.active"), "its code is in Coalton's file type").toHaveText(/main\.ct/);
-  await expect(page.locator(".editor-host .cm-content"), "main.ct opens on its Coalton code").toContainText("(declare greet (String -> String))", { timeout: 30_000 });
-  expect(readFileSync(join(root, "zen-typed.asd"), "utf8")).toContain(':depends-on ("coalton")');
-  expect(readFileSync(join(root, "src/package.lisp"), "utf8")).toContain("(:use #:coalton #:coalton-prelude)");
+  await expect(page.getByRole("radio", { name: "ocicl" }), "Coalton picks ocicl").toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: "Quicklisp" }), "and Quicklisp's 2024 Coalton is not offered").toBeDisabled();
+  await expect(page.locator(".dialog-hint", { hasText: "cannot read .ct files" })).toBeVisible();
+  await page.getByRole("radio", { name: "Common Lisp" }).click();
+  await expect(page.getByRole("radio", { name: "Quicklisp" }), "Common Lisp can use Quicklisp again").toBeEnabled();
+  // Creating one would download and compile Coalton, which the Rust test of the template avoids.
+  await page.getByRole("button", { name: "Cancel" }).click();
 });
 
 test("a Coalton type error from ⌘Enter is a note on the expression Coalton blames, not the debugger", async ({ page }) => {

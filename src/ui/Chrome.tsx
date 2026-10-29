@@ -235,6 +235,8 @@ const DEPS_HINT: Record<NewDeps, string> = {
   ocicl: "Each dependency's exact version is pinned in ocicl.csv, and ocicl fetches it from its registry.",
 };
 
+const COALTON_DEPS_HINT = "Coalton projects use ocicl, which has a recent Coalton. Quicklisp's is from 2024 and cannot read .ct files.";
+
 const LANGUAGE_HINT: Record<NewLanguage, string> = {
   lisp: "Plain Common Lisp.",
   coalton: "Statically typed code in coalton-toplevel forms, with the coalton system as a dependency.",
@@ -295,7 +297,10 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
               role="radio"
               aria-checked={language === l}
               className={language === l ? "active" : ""}
-              onClick={() => setLanguage(l)}
+              onClick={() => {
+                setLanguage(l);
+                if (l === "coalton") setDeps("ocicl");
+              }}
             >
               {l === "lisp" ? "Common Lisp" : "Coalton"}
             </button>
@@ -311,6 +316,7 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
               role="radio"
               aria-checked={deps === d}
               className={deps === d ? "active" : ""}
+              disabled={language === "coalton" && d === "quicklisp"}
               onClick={() => setDeps(d)}
             >
               {d === "quicklisp" ? "Quicklisp" : "ocicl"}
@@ -318,7 +324,7 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
           ))}
         </div>
         <div className="dialog-hint">
-          {deps === "ocicl" && ocicl && !ocicl.ready ? ocicl.missing : DEPS_HINT[deps]}
+          {deps === "ocicl" && ocicl && !ocicl.ready ? ocicl.missing : language === "coalton" ? COALTON_DEPS_HINT : DEPS_HINT[deps]}
         </div>
         <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 10 }}>
           Creates an ASDF system with src/, a test system, and an executable build target.
