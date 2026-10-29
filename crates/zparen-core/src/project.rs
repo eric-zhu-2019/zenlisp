@@ -170,7 +170,12 @@ impl Project {
             match m {
                 DepManager::Qlot { setup, installed: true } | DepManager::Quicklisp { setup } => forms.push(load(setup)),
                 DepManager::Qlot { installed: false, .. } => {}
-                DepManager::Ocicl { runtime } => forms.push(load(runtime)),
+                // A startup image has the runtime already, and loading it again redefines its constants.
+                DepManager::Ocicl { runtime } => forms.push(Sexp::list([
+                    Sexp::sym("cl:unless"),
+                    Sexp::list([Sexp::sym("cl:find-package"), Sexp::str("OCICL-RUNTIME")]),
+                    load(runtime),
+                ])),
                 DepManager::Vendor { dirs } => trees.extend(dirs.iter().map(|d| tree(d))),
             }
         }
@@ -399,6 +404,23 @@ mod tests {
         let root = tmp("setup");
         let forms = Project::detect(&root).setup_forms();
         assert!(forms.last().unwrap().to_string().starts_with("(asdf:initialize-source-registry"));
+    }
+
+    #[test]
+    fn setup_runs_again_in_an_image_that_has_the_ocicl_runtime() {
+        let root = tmp("ocicl-again");
+        // ocicl's runtime defines its version as a string constant, which loading it twice redefines.
+        let runtime = root.join("ocicl-runtime.lisp");
+        std::fs::write(&runtime, "(defpackage #:ocicl-runtime (:use #:cl))\n(in-package #:ocicl-runtime)\n(defconstant +version+ \"2.20.0\")\n").unwrap();
+        let p = Project { root: root.display().to_string(), name: "ocicl-again".into(), managers: vec![DepManager::Ocicl { runtime: runtime.display().to_string() }] };
+        let mut cmd = std::process::Command::new("sbcl");
+        cmd.args(["--noinform", "--non-interactive", "--no-userinit"]);
+        // A saved image has run the setup once already; starting from it runs it again.
+        for f in p.setup_forms().iter().chain(p.setup_forms().iter()) {
+            cmd.arg("--eval").arg(f.to_string());
+        }
+        let out = cmd.output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     }
 
     #[test]
