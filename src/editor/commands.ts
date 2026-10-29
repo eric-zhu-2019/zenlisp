@@ -441,6 +441,25 @@ function askToFix(view: EditorView, from: number, n: Note) {
   return actions.askToFix(path, text, { file: path, package: bufferPackage(view, from), form: form ? form.slice(0, 4000) : null });
 }
 
+/**
+ * A Coalton message without its copy of the source, which the underline already
+ * shows: the headline, what the carets say, and any help. Other messages stay whole.
+ */
+export function briefMessage(message: string): string {
+  const lines = message.split("\n");
+  if (!lines.some((l) => /^\s*--> /.test(l))) return message;
+  let headline = lines[0].replace(/^(error|warning): /, "");
+  const rest: string[] = [];
+  for (const line of lines.slice(1)) {
+    const label = /^\s*\|[\s|/\\_]*[\^\-~]+\s+(\S.*)$/.exec(line)?.[1];
+    if (label) {
+      if (label.startsWith(headline)) headline = label;
+      else rest.push(label);
+    } else if (!/^\s*(-->|\d*\s*\|)/.test(line) && line.trim()) rest.push(line.trim());
+  }
+  return [headline, ...rest].join("\n");
+}
+
 export function notesToDiagnostics(notes: Note[], text: string): Diagnostic[] {
   return notes
     .filter((n) => n.location?.offset != null)
@@ -457,7 +476,7 @@ export function notesToDiagnostics(notes: Note[], text: string): Diagnostic[] {
         to,
         // An undefined function is only a style warning to SBCL, and the commonest typo.
         severity: n.severity === "error" || n.severity === "read-error" ? "error" : n.severity === "warning" || n.severity === "style-warning" ? "warning" : "info",
-        message: n.message,
+        message: briefMessage(n.message),
         source: "SBCL",
         actions: [
           { name: "Copy", apply: () => void navigator.clipboard.writeText(n.message) },
