@@ -444,11 +444,90 @@ are left to the compiler, as before."
   (call-as-coalton string (lambda () (compile-with-coalton-errors string (lambda () (apply function string args))))))
 
 (defun compile-file-as-coalton (function file &rest args)
-  (compile-with-coalton-errors (or (ignore-errors (uiop:read-file-string file)) "")
-                               (lambda () (apply function file args))))
+  (if (coal-file-p file)
+      (apply function file args)
+      (compile-with-coalton-errors (or (ignore-errors (uiop:read-file-string file)) "")
+                                   (lambda () (apply function file args)))))
+
+(defun compiling-a-file-p ()
+  "True while a file compiles or ASDF works, whose restarts the debugger offers."
+  (let ((session (find-symbol "*ASDF-SESSION*" "ASDF/SESSION")))
+    (or *compile-file-truename* (and session (boundp session) (symbol-value session)))))
+
+(defun coalton-error-message (function &rest args)
+  "Calls FUNCTION with ARGS. When Coalton rejects a form it evaluates, returns
+NIL and Coalton's message as a second value, rather than opening the debugger.
+A form in a file being compiled still opens it."
+  (let ((error-type (coalton-symbol "SOURCE-ERROR" "COALTON-IMPL/SOURCE")))
+    (block eval
+      (handler-bind ((error (lambda (c)
+                              (when (and error-type (typep c error-type) (not (compiling-a-file-p)))
+                                (return-from eval (values nil (princ-to-string c)))))))
+        (values (apply function args) nil)))))
+
+(defun write-coalton-error (message)
+  (fresh-line)
+  (dolist (line (uiop:split-string (string-right-trim '(#\Newline) message) :separator '(#\Newline)))
+    (format t "; ~a~%" line))
+  (finish-output))
+
+(defun repl-eval-reporting-coalton-errors (function string)
+  "Swank's REPL evaluation of STRING. A form Coalton rejects prints Coalton's
+message in the REPL, which then takes the next input."
+  (multiple-value-bind (result message) (coalton-error-message function string)
+    (if message (write-coalton-error message) result)))
+
+(defun mrepl-eval-reporting-coalton-errors (function string)
+  "As REPL-EVAL-REPORTING-COALTON-ERRORS, in an extra REPL, which shows what
+FUNCTION returns as the result."
+  (multiple-value-bind (result message) (coalton-error-message function string)
+    (if message (progn (write-coalton-error message) "") result)))
+
+(defun coal-file-p (pathname)
+  (string-equal (pathname-type pathname) "coal"))
+
+(defun compile-coal-file (pathname load-p &rest options)
+  "Swank's compile hook for files in Coalton's .coal syntax, a package form and
+then Coalton's toplevel forms. Coalton compiles them itself, as coalton-asdf
+does. A form Coalton rejects becomes an error note on the expression it blames."
+  (let ((compile (coalton-symbol "COMPILE" "COALTON-IMPL/ENTRY"))
+        (make-source (coalton-symbol "MAKE-SOURCE-FILE" "COALTON-IMPL/SOURCE"))
+        (error-type (coalton-symbol "SOURCE-ERROR" "COALTON-IMPL/SOURCE")))
+    (when (and (coal-file-p pathname) compile make-source error-type)
+      (let ((fasl (swank::fasl-pathname pathname options))
+            ;; Coalton writes the file out as Lisp and reads it back with the standard syntax.
+            (*readtable* (copy-readtable nil)))
+        ;; Coalton names the fasl whether or not the Lisp it wrote compiled.
+        (when (probe-file fasl) (delete-file fasl))
+        (block compile
+          (handler-bind ((error (lambda (c)
+                                  (when (typep c error-type)
+                                    (signal 'swank/backend:compiler-condition
+                                            :original-condition c
+                                            :severity :error
+                                            :message (princ-to-string c)
+                                            :source-context nil
+                                            :references nil
+                                            :location (coal-error-location c pathname))
+                                    (return-from compile (values t nil nil nil))))))
+            (funcall compile (funcall make-source pathname) :load nil :output-file fasl)
+            (let ((compiled (probe-file fasl)))
+              (values t (and compiled t) (and compiled load-p) (and compiled fasl)))))))))
+
+(defun coal-error-location (condition pathname)
+  "Where in PATHNAME Coalton places its error CONDITION: the start of the
+expression its first note is on."
+  (flet ((call (name arg) (funcall (coalton-symbol name "COALTON-IMPL/SOURCE") arg)))
+    (let ((offset (ignore-errors (call "SPAN-START" (call "LOCATION-SPAN" (call "LOCATION" (first (call "NOTES" condition))))))))
+      (if offset
+          (swank/backend:make-location (list :file (namestring pathname)) (list :position (1+ offset)))
+          (swank/backend:make-error-location "Coalton gave no place for this error")))))
 
 (defun accept-coalton-forms ()
-  (loop for (name wrapper) in '((swank::eval-region eval-as-coalton)
+  (pushnew 'compile-coal-file swank::*compile-file-for-emacs-hook*)
+  (loop for (name wrapper) in '((swank-repl::repl-eval repl-eval-reporting-coalton-errors)
+                                (swank-mrepl::read-eval-print mrepl-eval-reporting-coalton-errors)
+                                (swank::eval-region eval-as-coalton)
                                 (swank:eval-and-grab-output eval-as-coalton)
                                 (swank:compile-string-for-emacs compile-string-as-coalton)
                                 (swank:compile-file-for-emacs compile-file-as-coalton)
@@ -484,7 +563,8 @@ first, as a build compiles them, so their packages and functions are known."
   (sb-thread:with-recursive-lock (*image-lock*)
     (let* ((dir (uiop:ensure-directory-pathname
                  (merge-pathnames (format nil "zparen-check-~d/" (sb-posix:getpid)) (uiop:temporary-directory))))
-           (file (merge-pathnames "buffer.lisp" dir))
+           ;; A .coal file keeps its type, so it compiles as Coalton's syntax.
+           (file (merge-pathnames (if (and source (coal-file-p source)) "buffer.coal" "buffer.lisp") dir))
            (stopped '()))
       (ensure-directories-exist dir)
       (with-open-file (s file :direction :output :if-exists :supersede :external-format :utf-8)

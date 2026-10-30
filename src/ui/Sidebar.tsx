@@ -27,7 +27,7 @@ type Editing = { kind: "newFile" | "newDir"; dir: string } | { kind: "rename"; p
 type Menu = { x: number; y: number; entry: DirEntry | null };
 
 const parentOf = (path: string) => path.slice(0, path.lastIndexOf("/"));
-const isLisp = (name: string) => /\.(lisp|asd|lsp|cl|ct)$/.test(name);
+const isLisp = (name: string) => /\.(lisp|asd|lsp|cl|ct|coal)$/.test(name);
 
 /** The file tree as one model: which folders are open, and what each one holds. */
 function useFileTree(root: string) {

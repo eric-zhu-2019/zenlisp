@@ -1432,6 +1432,43 @@ test("a Coalton type error from ⌘Enter is a note on the expression Coalton bla
   await expect(page.getByTestId("debugger")).toHaveCount(0);
 });
 
+test("a .coal file compiles with Coalton, on ⌘B and again on save", async ({ page }) => {
+  const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));
+  await fresh(page);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-app").fill("zen-coal");
+  await page.getByPlaceholder("/Users/you/projects").fill(parent);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".dot.ready")).toBeVisible({ timeout: 60_000 });
+  const standIn = join(process.cwd(), "crates/zparen-core/tests/fixtures/coalton-stand-in.lisp");
+  await page.locator(".panel-tab", { hasText: "REPL" }).click();
+  await replEval(page, `(load "${standIn}")`);
+  await expect(page.locator(".presentation", { hasText: /^T$/ })).toBeVisible({ timeout: 20_000 });
+  writeFileSync(join(parent, "zen-coal/src/shapes.coal"), "(package zen-shapes)\n\n(define area 42)\n");
+  const tree = page.getByTestId("file-tree");
+  await tree.locator(".tree-row", { hasText: /^▸\s*src$/ }).click();
+  const row = tree.locator(".tree-row", { hasText: "shapes.coal" });
+  await expect(row, "shown as Lisp source").toHaveClass(/\blisp\b/);
+  await row.click();
+  await expect(page.locator(".tab.active")).toHaveText(/shapes\.coal/);
+
+  await page.locator(".editor-host .cm-content").click();
+  await page.keyboard.press("Meta+b");
+  await expect(page.locator(".repl-notice", { hasText: "Compiled shapes.coal" })).toBeVisible({ timeout: 20_000 });
+  await replEval(page, "(symbol-value (find-symbol \"AREA\" \"ZEN-SHAPES\"))");
+  await expect(page.locator(".presentation", { hasText: /^42$/ })).toBeVisible();
+
+  await page.locator(".editor-host .cm-line", { hasText: "(define area 42)" }).click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.type("$hr3");
+  await expect(page.locator(".editor-host .cm-line", { hasText: "(define area 43)" })).toBeVisible();
+  await page.keyboard.press("Meta+s");
+  await expect(page.getByTestId("flash")).toHaveText("Compiled shapes.coal");
+  await replEval(page, "(symbol-value (find-symbol \"AREA\" \"ZEN-SHAPES\"))");
+  await expect(page.locator(".presentation", { hasText: /^43$/ })).toBeVisible();
+  await expect(page.getByTestId("debugger")).toHaveCount(0);
+});
+
 test("a new project can take its dependencies from ocicl", async ({ page }) => {
   test.skip(!existsSync(join(homedir(), ".local/share/ocicl/ocicl-runtime.lisp")), "ocicl is not set up on this Mac");
   const parent = mkdtempSync(join(tmpdir(), "zparen-e2e-"));

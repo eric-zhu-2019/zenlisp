@@ -83,7 +83,8 @@ Subagents took on separate pieces. Each coding agent worked in its own git workt
 - **Projects.** ASDF systems with Quicklisp, qlot, ocicl or vendored
   dependencies, a dependency editor, and startup images.
 - **Coalton.** New Coalton projects, Coalton forms in the REPL and the editor,
-  Coalton types on hover, and type errors on the expression Coalton blames.
+  `.coal` files, Coalton types on hover, and type errors on the expression
+  Coalton blames.
 - **Editor.** Vim keys, SLIME's Emacs sequences, parinfer, structural editing,
   split panes, a git gutter with inline diffs, word wrap (⌥Z), Markdown preview
   (⇧⌘V), and a choice of editor and interface fonts.
@@ -195,18 +196,29 @@ In the editor and the REPL:
 - **Fix type errors.** The check as you type, ⌘Enter, and a file compile mark
   the expression Coalton blames. The note shows Coalton's message without its
   copy of the source. **Copy** and **Ask AI to fix** give the full message.
+  A type error in a form typed in the REPL prints Coalton's message in the
+  REPL, and the debugger stays closed.
 - **Color.** Coalton's operators, such as `define`, `match` and `declare`, have
-  their own color. ZParen reads `.ct` files as Lisp source.
+  their own color. ZParen reads `.ct` and `.coal` files as Lisp source.
+
+Coalton also has the `.coal` file type. A `.coal` file starts with a
+`(package …)` form, and its definitions follow without `coalton-toplevel`. An
+`.asd` lists such a file as a `:coalton-file`. ZParen compiles a `.coal` file
+with Coalton's own compiler:
+
+- ⌘B compiles and loads the file.
+- Saving a loaded `.coal` file compiles all of it again.
+- The check as you type marks the expression Coalton blames.
+- The `(package …)` form sets the package for ⌘Enter, hover and completion.
 
 Save a startup image after the first load. Lisp then starts with Coalton
 loaded, and does not compile it again.
 
 Some limits apply:
 
-- A type error in a form typed in the REPL still opens the debugger.
 - When a file compile finds a type error, the forms after it in the file do
   not load.
-- ZParen does not read Coalton's native `.coal` syntax.
+- When a `.coal` file has a type error, no part of it loads.
 
 ## Use Claude or OpenAI
 

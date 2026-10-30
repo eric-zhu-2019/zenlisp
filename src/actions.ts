@@ -895,8 +895,8 @@ export function flash(text: string, tone: "info" | "error" = "info") {
   setTimeout(() => get().flash?.text === text && set({ flash: null }), 3500);
 }
 
-/** Source the image compiles: .lisp files, and Coalton's .ct files, which are Lisp syntax. */
-const isLispSource = (path: string) => /\.(lisp|ct)$/.test(path);
+/** Source the image compiles: .lisp files, and Coalton's .ct and .coal files, which are Lisp syntax. */
+const isLispSource = (path: string) => /\.(lisp|ct|coal)$/.test(path);
 
 /**
  * Compiles, in file order, the top-level forms of `text` that Lisp does not
@@ -915,6 +915,15 @@ async function compileChangedForms(path: string, text: string, source = "") {
   const pkg = packageAt(text, changed[0].from) ?? "COMMON-LISP-USER";
   const exists = await backend.request({ type: "lisp", op: { op: "eval", form: `(and (find-package ${lispString(pkg)}) t)`, package: "COMMON-LISP-USER" } }).catch(() => null);
   if (!(exists?.type === "lisp" && exists.reply.kind === "evaluated" && exists.reply.value === "T")) return;
+  // Coalton reads a .coal file whole: its forms are not Lisp forms alone.
+  if (path.endsWith(".coal")) {
+    const r = await lisp({ op: "compileFile", path, load: true }).catch(() => null);
+    if (r?.kind !== "compiled") return;
+    if (r.success) compiledAll(path, text);
+    lastCompiled.set(path, text);
+    set((s) => ({ notes: { ...s.notes, [path]: r.notes } }));
+    return flash(r.success ? `Compiled ${baseName(path)}${source}` : `${baseName(path)} did not compile; see Problems`, r.success ? "info" : "error");
+  }
   const failed = new Set<string>();
   const done: string[] = [];
   for (const f of changed) {

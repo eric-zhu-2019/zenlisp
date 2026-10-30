@@ -440,6 +440,41 @@ async fn plugins_add_commands_settings_checks_and_repl_hooks() {
 }
 
 #[tokio::test]
+async fn coal_files_compile_with_coalton() {
+    let s = start().await;
+    let c = &s.conn;
+    let run = |op: Op| async move { tokio::time::timeout(Duration::from_secs(10), op.run(c)).await.expect("answers").unwrap() };
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/coalton-stand-in.lisp");
+    run(cl(|package| Op::Eval { form: format!("(load {:?})", fixture.display().to_string()), package })).await;
+    let dir = std::env::temp_dir().join(format!("zparen-coal-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = |name: &str| dir.join(name).to_string_lossy().into_owned();
+
+    std::fs::write(dir.join("good.coal"), "(package zen-coal)\n\n(define answer 42)\n").unwrap();
+    let Reply::Compiled { success, notes, .. } = run(Op::CompileFile { path: path("good.coal"), load: true }).await else { panic!() };
+    assert!(success && notes.is_empty(), "{notes:?}");
+    let Reply::Evaluated { value, .. } = run(cl(|package| Op::Eval { form: "(symbol-value (find-symbol \"ANSWER\" \"ZEN-COAL\"))".into(), package })).await else {
+        panic!()
+    };
+    assert_eq!(value, "42", "the file loaded");
+
+    let bad = "(package zen-coal-bad)\n\n(define v (bad 1))\n";
+    std::fs::write(dir.join("bad.coal"), bad).unwrap();
+    let Reply::Compiled { success, notes, .. } = run(Op::CompileFile { path: path("bad.coal"), load: true }).await else { panic!() };
+    assert!(!success, "{notes:?}");
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].message.starts_with("error: Ambiguous predicate"), "{}", notes[0].message);
+    assert_eq!(notes[0].location.as_ref().and_then(|l| l.offset), Some(bad.find("(bad").unwrap() as i64), "on the expression Coalton blames");
+
+    let Reply::Compiled { success, notes, .. } = run(cl(|package| Op::CheckText { text: bad.into(), package, file: Some(path("bad.coal")) })).await else { panic!() };
+    assert!(!success, "{notes:?}");
+    let offsets: Vec<_> = notes.iter().filter(|n| n.severity == "error").map(|n| n.location.as_ref().and_then(|l| l.offset)).collect();
+    assert_eq!(offsets, [Some(bad.find("(bad").unwrap() as i64)], "the check reads the text as .coal: {notes:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+    s.stop().await;
+}
+
+#[tokio::test]
 async fn coalton_forms_run_inside_coalton_and_hovers_show_coalton_types() {
     let s = start().await;
     let c = &s.conn;
@@ -463,6 +498,28 @@ async fn coalton_forms_run_inside_coalton_and_hovers_show_coalton_types() {
 
     run(cl(|package| Op::ReplEval { input: "(coalton:define z 2)".into(), package })).await;
     assert_eq!(eval("cl-user::*compiled*").await, "((COALTON:DEFINE Z 2))");
+
+    // A form Coalton rejects in the REPL prints Coalton's message there, and the debugger stays closed.
+    let mut events = c.subscribe();
+    run(cl(|package| Op::ReplEval { input: "(coalton:coalton-toplevel (coalton:define v (bad 1)))".into(), package })).await;
+    let mut output = String::new();
+    while let Ok(Ok(e)) = tokio::time::timeout(Duration::from_millis(500), events.recv()).await {
+        match e {
+            Event::Output { text, target: None } => output.push_str(&text),
+            Event::Debug(d) => panic!("the debugger opened: {d:?}"),
+            _ => {}
+        }
+    }
+    assert!(output.starts_with("; error: Ambiguous predicate\n;   --> <macroexpansion>"), "{output:?}");
+    // While ASDF works, as a quickload typed in the REPL does, the debugger offers ASDF's restarts as before.
+    let mut events = c.subscribe();
+    let input = "(let ((asdf/session:*asdf-session* t)) (eval '(coalton:coalton-toplevel (coalton:define v (bad 1)))))";
+    let conn = c.clone();
+    let pending = tokio::spawn(async move { cl(|package| Op::ReplEval { input: input.into(), package }).run(&conn).await });
+    let d = next_debugger(&mut events).await;
+    assert!(d.condition.contains("Ambiguous predicate"), "{}", d.condition);
+    let _ = Op::DebuggerAbort { thread: d.thread }.run(c).await;
+    let _ = pending.await;
 
     let Reply::Compiled { success, notes, .. } = run(cl(|package| Op::CompileForm {
         form: "(coalton:define w 3)".into(),

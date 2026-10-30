@@ -96,7 +96,9 @@ export function formAtOrBefore(text: string, pos: number): Range | null {
 
 export function packageAt(text: string, pos: number): string | null {
   const re = /\(\s*(?:cl:|common-lisp:)?in-package\s+(?:#?:|')?"?([^\s)"]+)"?\s*\)/gi;
-  let found: string | null = null;
+  // A file in Coalton's .coal syntax starts with a package form, which names its package.
+  const header = /^(?:\s|;[^\n]*(?:\n|$)|#\|[\s\S]*?\|#)*\(\s*package\s+(?:#?:)?([^\s()"]+)/i.exec(text);
+  let found: string | null = header ? header[1] : null;
   for (const m of text.slice(0, pos).matchAll(re)) found = m[1];
   return found ? found.toUpperCase() : null;
 }

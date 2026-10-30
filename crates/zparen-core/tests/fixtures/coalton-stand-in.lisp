@@ -67,3 +67,36 @@
       (format t "(INTEGER → INTEGER)~%")
       (write-line "unknown"))
   (values))
+
+;;; Coalton's compiler for .coal files: a package form, then definitions.
+;;; Here (define name value) defines a variable, and a call to BAD is an error.
+
+(defpackage #:coalton-impl/entry
+  (:use #:cl)
+  (:shadow #:compile)
+  (:export #:compile))
+
+(defun coalton-impl/source::make-source-file (file)
+  (coalton-impl/source::make-source :file-path (namestring file)))
+
+(defun coalton-impl/entry:compile (source &key (load t) output-file)
+  (let* ((file (coalton-impl/source::source-file-path source))
+         (text (uiop:read-file-string file))
+         (bad (search "(bad" text)))
+    (when bad
+      (error 'coalton-impl/source:source-error
+             :notes (list (coalton-impl/source::make-note
+                           :location (coalton-impl/source::make-location
+                                      :source source :span (cons bad (+ bad 7)))))))
+    (let ((forms (with-input-from-string (s text)
+                   (let ((*package* (make-package (gensym "COAL-READ") :use '())))
+                     (loop for form = (read s nil s) until (eq form s) collect form))))
+          (lisp (uiop:tmpize-pathname (merge-pathnames "coal.lisp" (uiop:temporary-directory)))))
+      (with-open-file (out lisp :direction :output :if-exists :supersede)
+        (let ((name (symbol-name (second (first forms)))))
+          (format out "(defpackage ~s (:use #:cl))~%(in-package ~s)~%" name name)
+          (dolist (form (rest forms))
+            (format out "(defparameter ~a ~s)~%" (symbol-name (second form)) (third form)))))
+      (cl:compile-file lisp :output-file output-file)
+      (when load (load output-file))
+      output-file)))

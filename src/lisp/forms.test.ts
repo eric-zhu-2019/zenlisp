@@ -37,6 +37,12 @@ describe("packageAt", () => {
     expect(packageAt("(in-package #:foo) (in-package \"BAR\")", 40)).toBe("BAR");
     expect(packageAt("(defun f ())", 5)).toBeNull();
   });
+
+  it("reads the package form a Coalton .coal file starts with", () => {
+    const coal = ";; Shapes.\n(package zen-shapes\n  (import coalton-prelude))\n\n(define (area r) (* r r))\n";
+    expect(packageAt(coal, coal.length)).toBe("ZEN-SHAPES");
+    expect(packageAt("(defun f () (package x))", 20), "only as the first form").toBeNull();
+  });
 });
 
 describe("symbolAt", () => {
