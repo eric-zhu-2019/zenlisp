@@ -1430,6 +1430,24 @@ test("a Coalton type error from ⌘Enter is a note on the expression Coalton bla
   await page.locator(".panel-tab", { hasText: "Problems" }).click();
   await expect(page.getByTestId("problems"), "in Coalton's words").toContainText("Ambiguous predicate");
   await expect(page.getByTestId("debugger")).toHaveCount(0);
+
+  // The Documentation panel shows Coalton's manual for Coalton's operators and library, and its search finds Coalton classes.
+  const manual: string[] = [];
+  await page.route("https://coalton-lang.github.io/**", (route) => {
+    manual.push(route.request().url());
+    return route.fulfill({ contentType: "text/html", body: "<h1>Coalton manual</h1>" });
+  });
+  await editor.locator(".cm-line", { hasText: "(coalton:define w" }).getByText("define").click();
+  await page.keyboard.press("Meta+Shift+D");
+  const docs = page.getByTestId("docs");
+  await expect(page.frameLocator("[data-testid=coalton-manual]").locator("h1")).toHaveText("Coalton manual");
+  await expect(docs.getByTestId("coalton-manual")).toHaveAttribute("src", "https://coalton-lang.github.io/manual/operators/define/");
+  await docs.getByPlaceholder("Search symbols in every package").fill("shape");
+  await docs.getByTestId("apropos").locator("li", { hasText: "coalton:shape" }).click();
+  await expect(docs.getByTestId("coalton-manual")).toHaveAttribute("src", "https://coalton-lang.github.io/reference/#coalton-shape-class");
+  await docs.getByRole("tab", { name: "Docstring" }).click();
+  await expect(docs.locator(".docs-text")).toContainText("Coalton class SHAPE :A");
+  expect(manual.length, "the manual loads in the panel").toBeGreaterThan(0);
 });
 
 test("a .coal file compiles with Coalton, on ⌘B and again on save", async ({ page }) => {

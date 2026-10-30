@@ -196,6 +196,11 @@ In the editor and the REPL:
   documentation and constructors. On a class, such as `Num`, they show its
   superclasses, documentation and methods. The search in the Documentation
   panel finds Coalton types and classes too.
+- **Read the manual.** For Coalton's operators, such as `match`, and its
+  library, such as `Optional` or `map`, the Documentation panel (⇧⌘D) shows
+  the page of [Coalton's manual](https://coalton-lang.github.io/manual/).
+  **Docstring** switches to the text above. The manual is online, so it needs a
+  network connection.
 - **Ask for help.** `(help Optional)` in the REPL prints the same, and for a
   value it prints its type and documentation. For a name that Coalton does not
   know, it prints what Lisp knows. `(help)` says how to use it. A `help`

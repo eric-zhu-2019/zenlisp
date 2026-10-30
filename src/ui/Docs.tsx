@@ -7,24 +7,33 @@ import { set, useStore } from "../store";
 import { openExternal } from "../platform";
 import { Icon } from "./Icon";
 
-type Shown = { arglist: string | null; doc: string | null; standard: boolean; hyperspec: { installed: boolean; page: string | null } };
+type Shown = {
+  arglist: string | null;
+  doc: string | null;
+  standard: boolean;
+  hyperspec: { installed: boolean; page: string | null };
+  /** The address of Coalton's manual on the symbol, for Coalton's operators and library. */
+  manual: string | null;
+};
 
 const lispString = (s: string) => `"${s.replace(/[\\"]/g, "\\$&")}"`;
 
 async function lookUp(symbol: string, pkg: string): Promise<Shown> {
   const standard = `(let ((s (ignore-errors (let ((*read-eval* nil)) (read-from-string ${lispString(symbol)})))))
   (and s (symbolp s) (eq (symbol-package s) (find-package "COMMON-LISP"))))`;
-  const [described, arglist, hs, cl] = await Promise.all([
+  const [described, arglist, hs, cl, coalton] = await Promise.all([
     actions.lisp({ op: "describe", symbol, package: pkg }).catch(() => null),
     actions.lisp({ op: "autodoc", form: [symbol, "", { cursor: true }], package: pkg }).catch(() => null),
     actions.request({ type: "hyperspec", symbol }).catch(() => null),
     actions.lisp({ op: "eval", form: standard, package: pkg }).catch(() => null),
+    actions.lisp({ op: "eval", form: `(zparen::coalton-manual-page-named ${lispString(symbol)})`, package: pkg }).catch(() => null),
   ]);
   return {
     doc: described?.kind === "text" ? trimDoc(described.text, Infinity) : null,
     arglist: arglist?.kind === "arglist" && arglist.text.startsWith("(") ? arglist.text : null,
     standard: cl?.kind === "evaluated" && cl.value === "T",
     hyperspec: hs?.type === "hyperspec" ? { installed: hs.installed, page: hs.page } : { installed: false, page: null },
+    manual: coalton?.kind === "evaluated" && /^"https:\/\/coalton-lang\.github\.io\/[^"]*"$/.test(coalton.value) ? coalton.value.slice(1, -1) : null,
   };
 }
 
@@ -65,6 +74,10 @@ function Apropos({ onPick }: { onPick: (name: string) => void }) {
 
 function HyperSpecPage({ page }: { page: string }) {
   return <iframe className="hyperspec" title="Common Lisp HyperSpec" src={hyperspecUrl(page)} data-testid="hyperspec" />;
+}
+
+function CoaltonManualPage({ url }: { url: string }) {
+  return <iframe className="hyperspec" title="Coalton manual" src={url} data-testid="coalton-manual" />;
 }
 
 function InstallHyperSpec({ symbol, onInstalled }: { symbol: string; onInstalled: () => void }) {
@@ -133,7 +146,7 @@ export function DocsPanel() {
       {!topic ? (
         <div className="docs-empty">
           Put the cursor on a symbol, or search above. Lisp's own documentation for it shows here, with its HyperSpec page for
-          Common Lisp symbols.
+          Common Lisp symbols and Coalton's manual for Coalton's operators and library.
         </div>
       ) : (
         <div className="docs-body">
@@ -150,20 +163,26 @@ export function DocsPanel() {
           ) : (
             <>
               {shown.arglist && <code className="docs-arglist">{shown.arglist}</code>}
-              {shown.hyperspec.page && shown.doc && (
+              {(shown.hyperspec.page || shown.manual) && shown.doc && (
                 <div className="segmented" role="tablist">
                   {(["hyperspec", "docstring"] as const).map((v) => (
                     <button key={v} role="tab" className={view === v ? "active" : ""} onClick={() => setView(v)}>
-                      {v === "hyperspec" ? "HyperSpec" : "Docstring"}
+                      {v === "docstring" ? "Docstring" : shown.hyperspec.page ? "HyperSpec" : "Coalton manual"}
                     </button>
                   ))}
                 </div>
               )}
-              {shown.doc && (!shown.hyperspec.page || view === "docstring") ? (
+              {shown.manual && !shown.hyperspec.page && (
+                <button className="btn" onClick={() => openExternal(shown.manual!)}>
+                  Open the Coalton manual in the browser
+                </button>
+              )}
+              {shown.doc && ((!shown.hyperspec.page && !shown.manual) || view === "docstring") ? (
                 <pre className="docs-text">{shown.doc}</pre>
               ) : (
-                !shown.doc && !shown.hyperspec.page && <div className="dim">No documentation.</div>
+                !shown.doc && !shown.hyperspec.page && !shown.manual && <div className="dim">No documentation.</div>
               )}
+              {shown.manual && !shown.hyperspec.page && view === "hyperspec" && <CoaltonManualPage url={shown.manual} />}
               {shown.hyperspec.page ? (
                 view === "hyperspec" && <HyperSpecPage page={shown.hyperspec.page} />
               ) : (

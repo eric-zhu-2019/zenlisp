@@ -421,6 +421,81 @@ class, which Lisp knows nothing of."
             (description (append description entries))
             (t (list* :designator (swank::to-string symbol) entries))))))
 
+(defparameter *coalton-operator-pages*
+  '(("COALTON" . "coalton") ("COALTON-TOPLEVEL" . "coalton-toplevel") ("DEFINE" . "define")
+    ("DEFINE-CLASS" . "define-class") ("DEFINE-EXCEPTION" . "define-exception")
+    ("DEFINE-INSTANCE" . "define-instance") ("DEFINE-RESUMPTION" . "define-resumption")
+    ("DEFINE-STRUCT" . "define-struct") ("DEFINE-TYPE" . "define-type")
+    ("DEFINE-TYPE-ALIAS" . "define-type-alias") ("DEFINE-EXPRESSION-MACRO" . "define-expression-macro")
+    ("DEFINE-TOPLEVEL-MACRO" . "define-toplevel-macro") ("DEFMACRO" . "defmacro") ("DECLARE" . "declare")
+    ("DERIVE" . "derive") ("INLINE" . "inline") ("LIKELY" . "likely") ("MONOMORPHIZE" . "monomorphize")
+    ("NOINLINE" . "noinline") ("OVERLAP" . "overlap") ("REPR" . "repr") ("SPECIALIZE" . "specialize")
+    ("UNLIKELY" . "unlikely") ("UNSAFE" . "unsafe") ("&KEY" . "keyword-tail") ("*" . "star")
+    ("->" . "arrow") ("=>" . "constraint-arrow") ("FORALL" . "forall") ("THE" . "the")
+    ("=" . "pattern-bind") ("_" . "wildcard") ("DYNAMIC-BIND" . "dynamic-bind") ("FN" . "fn")
+    ("ƒ" . "short-fn") ("LET" . "let") ("LET*" . "let-star") ("LISP" . "lisp") ("MATCH" . "match")
+    ("VALUES" . "values") ("AND" . "and") ("COND" . "cond") ("IF" . "if") ("OR" . "or")
+    ("UNLESS" . "unless") ("WHEN" . "when") ("BREAK" . "break") ("CONTINUE" . "continue")
+    ("FOR" . "for") ("FOR*" . "for-star") ("REC" . "rec") ("<-" . "do-bind") ("DO" . "do")
+    ("NEED" . "need") ("PROGN" . "progn") ("PROTECT" . "protect") ("RETURN" . "return")
+    ("CATCH" . "catch") ("HANDLE" . "handle") ("RESUMABLE" . "resumable") ("RESUME-TO" . "resume-to")
+    ("THROW" . "throw") (".<" . "compose-right") (".>" . "compose-left") ("AS" . "as") ("NEST" . "nest")
+    ("PIPE" . "pipe") ("TRY-AS" . "try-as") ("UNWRAP-AS" . "unwrap-as"))
+  "Coalton's operators, by symbol name, and the names of their pages in Coalton's manual.")
+
+(defun coalton-manual-page (symbol)
+  "The address of the part of Coalton's manual about SYMBOL: an operator's own
+page, or the reference entry for a type, class or function of Coalton's library,
+where a constructor is under its type and a method under its class. NIL for any
+other symbol, and for a macro, as the reference leaves out most of them."
+  (let* ((home (symbol-package symbol))
+         (name (and home (package-name home))))
+    (when (and name (find-package "COALTON")
+               (or (string= name "COALTON") (eql (search "COALTON/" name) 0)))
+      (let ((operator (and (string= name "COALTON")
+                           (assoc (symbol-name symbol) *coalton-operator-pages* :test #'string=)))
+            (class (coalton-method-class symbol))
+            (type (coalton-constructor-type symbol)))
+        (multiple-value-bind (symbol kind)
+            (cond (class (values class "class"))
+                  (type (values type "type"))
+                  ((ignore-errors (funcall (coalton-symbol "LOOKUP-TYPE" "COALTON") symbol)) (values symbol "type"))
+                  ((ignore-errors (funcall (coalton-symbol "LOOKUP-CLASS" "COALTON") symbol)) (values symbol "class"))
+                  ((and (not (macro-function symbol)) (symbol-coalton-type symbol)) (values symbol "value")))
+          (cond (operator (format nil "https://coalton-lang.github.io/manual/operators/~a/" (cdr operator)))
+                (kind (format nil "https://coalton-lang.github.io/reference/#~a-~(~a~)-~a"
+                              (substitute #\- #\/ (string-downcase (package-name (symbol-package symbol))))
+                              (symbol-name symbol) kind))))))))
+
+(defun coalton-constructor-type (symbol)
+  "The type SYMBOL is a constructor of, or NIL."
+  (ignore-errors
+   (let ((entry (funcall (coalton-symbol "LOOKUP-CONSTRUCTOR" "COALTON-IMPL/TYPECHECKER")
+                         (symbol-value (coalton-symbol "*GLOBAL-ENVIRONMENT*" "COALTON-IMPL/ENTRY"))
+                         symbol :no-error t)))
+     (and entry (coalton-entry "CONSTRUCTOR-ENTRY-CONSTRUCTS" entry)))))
+
+(defun coalton-method-class (symbol)
+  "The class SYMBOL is a method of, or NIL. The class is among the constraints
+of the method's type, as in Num :a for fromInt."
+  (ignore-errors
+   (flet ((call (name &rest args) (apply (coalton-symbol name "COALTON-IMPL/TYPECHECKER") args)))
+     (let ((scheme (call "LOOKUP-VALUE-TYPE" (symbol-value (coalton-symbol "*GLOBAL-ENVIRONMENT*" "COALTON-IMPL/ENTRY"))
+                         symbol :no-error t)))
+       (when scheme
+         (loop for predicate in (call "QUALIFIED-TY-PREDICATES" (call "TY-SCHEME-TYPE" scheme))
+               for class-name = (call "TY-PREDICATE-CLASS" predicate)
+               for class = (funcall (coalton-symbol "LOOKUP-CLASS" "COALTON") class-name)
+               when (and class (member symbol (coalton-entry "TY-CLASS-UNQUALIFIED-METHODS" class)
+                                       :key (lambda (method) (coalton-entry "TY-CLASS-METHOD-NAME" method))))
+                 return class-name))))))
+
+(defun coalton-manual-page-named (string)
+  "COALTON-MANUAL-PAGE of the symbol STRING names in the current package."
+  (ignore-errors
+   (let ((symbol (let ((*read-eval* nil)) (read-from-string string))))
+     (and (symbolp symbol) (coalton-manual-page symbol)))))
+
 (defun coalton-signature (symbol)
   (format nil "~s :: ~a" symbol (symbol-coalton-type symbol)))
 
