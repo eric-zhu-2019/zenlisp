@@ -215,8 +215,8 @@ In the editor and the REPL:
   note has a button that makes it.
   A type error in a form typed in the REPL prints Coalton's message in the
   REPL, and the debugger stays closed. A Lisp call such as `(scale 10)` to a
-  Coalton function whose type has a constraint, such as `Num :a`, opens the
-  debugger, and the REPL first prints how to call it with `coalton`.
+  Coalton function whose type has a constraint, such as `Num :a`, prints how
+  to call it with `coalton`, and the debugger stays closed.
 - **Color.** Coalton's operators, such as `define`, `match` and `declare`, have
   their own color. ZParen reads `.ct` and `.coal` files as Lisp source.
 

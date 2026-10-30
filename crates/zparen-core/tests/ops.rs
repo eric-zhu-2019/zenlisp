@@ -521,11 +521,23 @@ async fn coalton_forms_run_inside_coalton_and_hovers_show_coalton_types() {
     let _ = Op::DebuggerAbort { thread: d.thread }.run(c).await;
     let _ = pending.await;
 
-    // A Lisp call to a Coalton function that takes an instance argument prints how to call it, and the debugger still opens.
-    for (input, hint) in [
-        ("(scale 10)", Some("; scale is a Coalton function of type ∀ :A. NUM :A ⇒ :A → :A.\n; Call it as (coalton (scale 10)).\n")),
-        ("(add2 1 2)", None),
-    ] {
+    // A Lisp call to a Coalton function that takes an instance argument prints how to call it, and the debugger stays closed.
+    let mut events = c.subscribe();
+    run(cl(|package| Op::ReplEval { input: "(scale 10)".into(), package })).await;
+    let mut output = String::new();
+    while let Ok(Ok(e)) = tokio::time::timeout(Duration::from_millis(500), events.recv()).await {
+        match e {
+            Event::Output { text, target: None } => output.push_str(&text),
+            Event::Debug(d) => panic!("the debugger opened: {d:?}"),
+            _ => {}
+        }
+    }
+    assert!(
+        output.contains("; scale is a Coalton function of type ∀ :A. NUM :A ⇒ :A → :A.\n; Call it as (coalton (scale 10)).\n"),
+        "{output:?}"
+    );
+    // Other wrong calls open the debugger without the hint, including one inside the arguments to a Coalton function.
+    for input in ["(add2 1 2)", "(scale (add2 1 2))"] {
         let mut events = c.subscribe();
         let conn = c.clone();
         let pending = tokio::spawn(async move { cl(|package| Op::ReplEval { input: input.into(), package }).run(&conn).await });
@@ -538,10 +550,7 @@ async fn coalton_forms_run_inside_coalton_and_hovers_show_coalton_types() {
             }
         };
         assert!(d.condition.contains("invalid number of arguments"), "{}", d.condition);
-        match hint {
-            Some(hint) => assert!(output.contains(hint), "{output:?}"),
-            None => assert!(!output.contains("Coalton function"), "{output:?}"),
-        }
+        assert!(!output.contains("Coalton function"), "{output:?}");
         let _ = Op::DebuggerAbort { thread: d.thread }.run(c).await;
         let _ = pending.await;
     }

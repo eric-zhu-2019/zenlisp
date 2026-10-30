@@ -674,7 +674,9 @@ are left to the compiler, as before."
 (defun coalton-error-message (function string)
   "Calls FUNCTION with STRING. When Coalton rejects a form it evaluates, returns
 NIL and Coalton's message as a second value, rather than opening the debugger.
-A form in a file being compiled still opens it."
+A form in a file being compiled still opens it. A Lisp call to a Coalton
+function that lacks its instance argument returns, as the message, how to
+call the function."
   (let ((error-type (coalton-symbol "SOURCE-ERROR" "COALTON-IMPL/SOURCE")))
     (block eval
       (handler-bind ((error (lambda (c)
@@ -682,14 +684,21 @@ A form in a file being compiled still opens it."
                                 (return-from eval (values nil (princ-to-string c))))))
                      (program-error (lambda (c)
                                       (declare (ignore c))
-                                      (let ((hint (coalton-call-hint string)))
-                                        (when hint (write-coalton-error hint))))))
+                                      (multiple-value-bind (hint name) (coalton-call-hint string)
+                                        (when (and hint (eq name (erring-function-name)))
+                                          (return-from eval (values nil hint)))))))
         (values (funcall function string) nil)))))
+
+(defun erring-function-name ()
+  "The name of the function in which the error being signaled happened."
+  (block frame
+    (sb-debug:map-backtrace (lambda (frame) (return-from frame (sb-di:debug-fun-name (sb-di:frame-debug-fun frame)))))))
 
 (defun coalton-call-hint (string)
   "When STRING is one Lisp call to a Coalton function whose type has a
 constraint, why the call fails: Coalton compiles such a function to take each
-constraint's instance as a further argument, which only Coalton passes."
+constraint's instance as a further argument, which only Coalton passes. The
+function's name is the second value."
   (ignore-errors
    (let ((*read-eval* nil))
      (multiple-value-bind (form end) (read-from-string string)
@@ -697,8 +706,9 @@ constraint's instance as a further argument, which only Coalton passes."
                   (eq (read-from-string string nil string :start end) string))
          (let ((type (symbol-coalton-type (car form))))
            (when (and type (or (search "⇒" type) (search "=>" type)))
-             (format nil "~(~a~) is a Coalton function of type ~a.~%Call it as (coalton ~a)."
-                     (car form) type (string-trim '(#\Space #\Tab #\Newline) string)))))))))
+             (values (format nil "~(~a~) is a Coalton function of type ~a.~%Call it as (coalton ~a)."
+                             (car form) type (string-trim '(#\Space #\Tab #\Newline) string))
+                     (car form)))))))))
 
 (defun write-coalton-error (message)
   (fresh-line)
