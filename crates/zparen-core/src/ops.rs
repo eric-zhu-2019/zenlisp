@@ -362,6 +362,20 @@ pub struct Note {
     pub message: String,
     pub severity: String,
     pub location: Option<SourceLocation>,
+    /// Edits the compiler suggests, such as Coalton's help.
+    pub fixes: Vec<Fix>,
+}
+
+/// An edit that replaces `old` at `offset` with `text`.
+#[derive(Debug, Clone, Serialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Fix {
+    pub label: String,
+    /// Zero-based character offset into the file or buffer.
+    pub offset: i64,
+    pub old: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize, TS, PartialEq)]
@@ -874,6 +888,20 @@ fn parse_compilation(v: &Sexp) -> Reply {
                 _ => "note".into(),
             },
             location: n.plist_get("location").and_then(parse_location),
+            fixes: n
+                .plist_get("fixes")
+                .map(Sexp::items)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|f| {
+                    Some(Fix {
+                        label: f.plist_get("label")?.as_str()?.into(),
+                        offset: f.plist_get("location").and_then(parse_location)?.offset?,
+                        old: f.plist_get("old")?.as_str()?.into(),
+                        text: f.plist_get("text")?.as_str()?.into(),
+                    })
+                })
+                .collect(),
         })
         .collect();
     Reply::Compiled {
@@ -1067,6 +1095,22 @@ mod tests {
         assert!(success);
         assert_eq!(notes[0].severity, "warning");
         assert_eq!(notes[0].location.as_ref().unwrap().offset, Some(14));
+    }
+
+    #[test]
+    fn compilation_notes_carry_suggested_fixes() {
+        let v = Sexp::parse(
+            r#"(:compilation-result ((:message "warn: Unused variable" :severity :warning
+                 :location (:location (:buffer "zz.lisp") (:offset 1 0) nil) :references nil
+                 :fixes ((:label "prefix the variable with '_' to declare it unused"
+                          :location (:location (:buffer "zz.lisp") (:offset 1 30) nil) :old "x" :text "_x")))) t 0.003 nil nil)"#,
+        )
+        .unwrap();
+        let Reply::Compiled { notes, .. } = parse_compilation(&v) else { panic!() };
+        assert_eq!(
+            notes[0].fixes,
+            [Fix { label: "prefix the variable with '_' to declare it unused".into(), offset: 30, old: "x".into(), text: "_x".into() }]
+        );
     }
 
     #[test]

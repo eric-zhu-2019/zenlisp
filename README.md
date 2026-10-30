@@ -192,10 +192,18 @@ In the editor and the REPL:
   inside `coalton-toplevel`. An expression typed alone, such as `match` or
   `let`, runs inside `coalton`.
 - **See types.** Hover and `K` show the Coalton type of a name, such as
-  `∀ :A. NUM :A ⇒ :A → :A`.
+  `∀ :A. NUM :A ⇒ :A → :A`. On a type, such as `Optional`, they show its kind,
+  documentation and constructors. On a class, such as `Num`, they show its
+  superclasses, documentation and methods.
+- **Ask for help.** `(help Optional)` in the REPL prints the same, and for a
+  value it prints its type and documentation. For a name that Coalton does not
+  know, it prints what Lisp knows. `(help)` says how to use it. A `help`
+  function of your own still runs as before.
 - **Fix type errors.** The check as you type, ⌘Enter, and a file compile mark
   the expression Coalton blames. The note shows Coalton's message without its
   copy of the source. **Copy** and **Ask AI to fix** give the full message.
+  When Coalton suggests an edit, such as `_x` for an unused variable `x`, the
+  note has a button that makes it.
   A type error in a form typed in the REPL prints Coalton's message in the
   REPL, and the debugger stays closed. A Lisp call such as `(scale 10)` to a
   Coalton function whose type has a constraint, such as `Num :a`, opens the

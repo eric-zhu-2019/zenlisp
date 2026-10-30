@@ -591,5 +591,72 @@ async fn coalton_forms_run_inside_coalton_and_hovers_show_coalton_types() {
     assert!(text.contains("Coalton type: (INTEGER → INTEGER)") && !text.contains("Not documented"), "{text}");
     let Reply::Text { text } = run(cl(|package| Op::Describe { symbol: "car".into(), package })).await else { panic!() };
     assert!(!text.contains("Coalton type"), "{text}");
+
+    // Coalton's help notes become edits the editor can make, at the text they rewrite.
+    let form = "(coalton:coalton-toplevel\n  (coalton:define v (unused y)))";
+    let Reply::Compiled { notes, .. } = run(cl(|package| Op::CompileForm {
+        form: form.into(),
+        buffer: "scratch".into(),
+        file: None,
+        offset: 100,
+        package,
+    }))
+    .await
+    else {
+        panic!()
+    };
+    let fixes: Vec<_> = notes.iter().flat_map(|n| n.fixes.clone()).collect();
+    assert_eq!(
+        fixes,
+        [zparen_core::ops::Fix {
+            label: "prefix the variable with '_' to declare it unused".into(),
+            offset: 100 + form.find("y)").unwrap() as i64,
+            old: "y".into(),
+            text: "_y".into(),
+        }],
+        "{notes:?}"
+    );
+
+    // Hover and K describe a Coalton type or class: its kind or superclasses, docstring, and constructors or methods.
+    let Reply::Text { text } = run(cl(|package| Op::Describe { symbol: "box".into(), package })).await else { panic!() };
+    assert!(
+        text.contains("Coalton type BOX :: * → *\n\nA box holding one value.\n\nConstructors:\n  BOX-OF :: ∀ :A. :A → BOX :A") && !text.contains("Not documented"),
+        "{text}"
+    );
+    let Reply::Text { text } = run(cl(|package| Op::Describe { symbol: "shape".into(), package })).await else { panic!() };
+    assert!(text.contains("Coalton class SHAPE :A\n\nThings with an area.\n\nMethods:\n  AREA :: ∀ :A. SHAPE :A ⇒ :A → DOUBLE-FLOAT"), "{text}");
+
+    // (help NAME) in the REPL prints the same, or what Lisp knows of NAME; (help) says how to use it.
+    let repl_output = |input: &'static str| {
+        let conn = c.clone();
+        async move {
+            let mut events = conn.subscribe();
+            let repl = conn.clone();
+            let pending = tokio::spawn(async move { cl(|package| Op::ReplEval { input: input.into(), package }).run(&repl).await });
+            let mut output = String::new();
+            while let Ok(Ok(e)) = tokio::time::timeout(Duration::from_millis(500), events.recv()).await {
+                match e {
+                    Event::Output { text, .. } => output.push_str(&text),
+                    Event::Debug(d) => panic!("the debugger opened: {d:?}"),
+                    _ => {}
+                }
+            }
+            pending.await.unwrap().unwrap();
+            output
+        }
+    };
+    let output = repl_output("(help box)").await;
+    assert!(output.starts_with("; Coalton type BOX :: * → *\n; \n; A box holding one value."), "{output:?}");
+    let output = repl_output("(help 'add2)").await;
+    assert!(output.starts_with("; ADD2 :: (INTEGER → INTEGER)"), "{output:?}");
+    let output = repl_output("(help car)").await;
+    assert!(output.contains("; COMMON-LISP:CAR\n;   [symbol]"), "{output:?}");
+    let output = repl_output("(help)").await;
+    assert!(output.starts_with("; (help NAME) shows what NAME is"), "{output:?}");
+    // A HELP function of the user's own still runs.
+    eval("(defun cl-user::help (x) (list :mine x))").await;
+    let output = repl_output("(help 1)").await;
+    assert!(output.contains("(:MINE 1)"), "{output:?}");
+    eval("(fmakunbound 'cl-user::help)").await;
     s.stop().await;
 }

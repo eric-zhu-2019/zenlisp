@@ -8,6 +8,7 @@ import { autodocForm, enclosingLists, formAtOrBefore, isSymbolChar, listEnd, pac
 import { definitions, formBefore } from "../lisp/tree";
 import { designatorToken } from "../lisp/designators";
 import { localBinding } from "../lisp/scope";
+import type { Fix } from "../protocol/Fix";
 import type { Note } from "../protocol/Note";
 import { appendTranscript, set, useStore } from "../store";
 import { markTour } from "../tour";
@@ -460,6 +461,12 @@ export function briefMessage(message: string): string {
   return [headline, ...rest].join("\n");
 }
 
+/** Makes the edit a compiler suggested, when the text it would replace is still at `at`. */
+function applyFix(view: EditorView, at: number, fix: Fix) {
+  if (view.state.sliceDoc(at, at + fix.old.length) !== fix.old) return void actions.flash("The code changed since this was checked", "error");
+  view.dispatch({ changes: { from: at, to: at + fix.old.length, insert: fix.text }, userEvent: "input" });
+}
+
 export function notesToDiagnostics(notes: Note[], text: string): Diagnostic[] {
   return notes
     .filter((n) => n.location?.offset != null)
@@ -479,6 +486,7 @@ export function notesToDiagnostics(notes: Note[], text: string): Diagnostic[] {
         message: briefMessage(n.message),
         source: "SBCL",
         actions: [
+          ...n.fixes.map((f) => ({ name: f.label[0].toUpperCase() + f.label.slice(1), apply: (view: EditorView, at: number) => applyFix(view, at + f.offset - from, f) })),
           { name: "Copy", apply: () => void navigator.clipboard.writeText(n.message) },
           { name: "Ask AI to fix", apply: (view, from) => void askToFix(view, from, n) },
         ],

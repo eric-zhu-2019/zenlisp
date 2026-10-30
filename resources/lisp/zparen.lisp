@@ -358,12 +358,86 @@ expands inside its Coalton macro, so the compiler still places notes on it."
 
 (defun document-with-coalton-type (function symbol-name)
   (let ((doc (funcall function symbol-name))
-        (type (coalton-type symbol-name)))
-    (if (and type (stringp doc))
-        (let ((body (search (format nil "~2%") doc)))
-          (format nil "~a~2%Coalton type: ~a~2%~a" (subseq doc 0 (or body 0))
-                  type (string-left-trim '(#\Newline) (remove-not-documented (subseq doc (or body 0))))))
+        (type (coalton-type symbol-name))
+        (description (ignore-errors
+                      (swank::with-buffer-syntax ()
+                        (multiple-value-bind (symbol found) (swank::parse-symbol symbol-name)
+                          (when found (coalton-description symbol)))))))
+    (if (and (or type description) (stringp doc))
+        (let* ((body (search (format nil "~2%") doc))
+               (rest (string-left-trim '(#\Newline) (remove-not-documented (subseq doc (or body 0))))))
+          (if description
+              (format nil "~a~@[~2%Coalton type: ~a~]~@[~2%~a~]~2%~a" (subseq doc 0 (or body 0))
+                      type (and (string/= (string-trim '(#\Space #\Newline) rest) "") rest) description)
+              (format nil "~a~2%Coalton type: ~a~2%~a" (subseq doc 0 (or body 0)) type rest)))
         doc)))
+
+(defun coalton-entry (accessor entry)
+  "ACCESSOR, one of Coalton's typechecker readers, applied to ENTRY."
+  (funcall (or (coalton-symbol accessor "COALTON-IMPL/TYPECHECKER")
+               (coalton-symbol accessor "COALTON-IMPL/TYPECHECKER/ENVIRONMENT"))
+           entry))
+
+(defun coalton-description (symbol)
+  "What Coalton knows of SYMBOL as a type or a class, in the current package's
+names: a type's kind, docstring and constructors, and a class's superclasses,
+docstring and methods. NIL when SYMBOL names neither."
+  (let ((lookup-type (coalton-symbol "LOOKUP-TYPE" "COALTON"))
+        (lookup-class (coalton-symbol "LOOKUP-CLASS" "COALTON"))
+        (docstring (coalton-symbol "DOCSTRING" "COALTON-IMPL/SOURCE")))
+    (when (and lookup-type lookup-class docstring)
+      (ignore-errors
+       (let* ((type (funcall lookup-type symbol))
+              (class (funcall lookup-class symbol))
+              (parts
+                (append
+                 (when type
+                   (list (format nil "Coalton type ~s :: ~s~@[~2%~a~]~@[~2%Constructors:~{~%  ~a~}~]"
+                                 symbol (funcall (coalton-symbol "KIND-OF" "COALTON") symbol) (funcall docstring type)
+                                 (mapcar #'coalton-signature (coalton-entry "TYPE-ENTRY-CONSTRUCTORS" type)))))
+                 (when class
+                   (list (format nil "Coalton class ~@[~{~s~^ ~} ⇒ ~]~s~@[~2%~a~]~@[~2%Methods:~{~%  ~a~}~]"
+                                 (coalton-entry "TY-CLASS-SUPERCLASSES" class) (coalton-entry "TY-CLASS-PREDICATE" class)
+                                 (funcall docstring class)
+                                 (mapcar (lambda (method) (coalton-signature (coalton-entry "TY-CLASS-METHOD-NAME" method)))
+                                         (coalton-entry "TY-CLASS-UNQUALIFIED-METHODS" class))))))))
+         (when parts (format nil "~{~a~^~2%~}" parts)))))))
+
+(defun coalton-signature (symbol)
+  (format nil "~s :: ~a" symbol (symbol-coalton-type symbol)))
+
+(defun help-text (symbol)
+  "What the REPL's help shows for SYMBOL: what Coalton knows of it as a value,
+a type and a class, or else what Lisp knows of it."
+  (let* ((type (symbol-coalton-type symbol))
+         (doc (and type (or (documentation symbol 'function) (documentation symbol 'variable))))
+         (parts (remove nil (list (and type (format nil "~a~@[~2%~a~]" (coalton-signature symbol) doc))
+                                  (coalton-description symbol)))))
+    (if parts
+        (format nil "~{~a~^~2%~}" parts)
+        (string-right-trim '(#\Newline) (with-output-to-string (out) (describe symbol out))))))
+
+(defun help-request (string)
+  "When STRING is (help NAME) and HELP names no function or macro, the symbol
+NAME, which may be quoted. (help) alone asks for :HELP."
+  (ignore-errors
+   (let ((*read-eval* nil))
+     (multiple-value-bind (form end) (read-from-string string)
+       (when (and (consp form) (symbolp (car form)) (string= (symbol-name (car form)) "HELP")
+                  (not (fboundp (car form)))
+                  (eq (read-from-string string nil string :start end) string))
+         (let ((name (if (and (consp (second form)) (eq (first (second form)) 'quote))
+                         (second (second form))
+                         (second form))))
+           (cond ((null (rest form)) :help)
+                 ((and (symbolp name) (null (cddr form))) name))))))))
+
+(defun write-help (request)
+  (write-coalton-error
+   (if (eq request :help)
+       "(help NAME) shows what NAME is: a Coalton value's type, a type's constructors,
+a class's methods, and their documentation, or what Lisp knows of NAME."
+       (help-text request))))
 
 (defun remove-not-documented (text)
   (let ((at (search "Not documented." text)))
@@ -380,29 +454,62 @@ Coalton's errors point at the expression they are about."
         (name (coalton-symbol "COALTON" "COALTON")))
     (and find name (fboundp find) (funcall find name))))
 
-(defun coalton-error-offset (condition)
-  "Where in the text being compiled Coalton places its error CONDITION, when
-Coalton read that text itself: the start of the expression its first note is
-on. Coalton names text compiled from an editor buffer by the buffer."
+(defvar *coal-file* nil "The .coal file Coalton compiles, while it does.")
+
+(defun coalton-offset (location)
+  "Where Coalton's LOCATION starts in the text being compiled, when Coalton read
+that text itself. Coalton names text compiled from an editor buffer by the buffer."
   (flet ((call (name arg) (funcall (coalton-symbol name "COALTON-IMPL/SOURCE") arg)))
     (ignore-errors
-     (let* ((location (call "LOCATION" (first (call "NOTES" condition))))
-            (file (call "SOURCE-FILE-PATH" (call "LOCATION-SOURCE" location))))
+     (let ((file (call "SOURCE-FILE-PATH" (call "LOCATION-SOURCE" location)))
+           (compiled (or *compile-file-truename* *coal-file*)))
        (when (if swank/sbcl::*buffer-name*
                  (equal file swank/sbcl::*buffer-name*)
-                 (and *compile-file-truename* (equal (probe-file file) (probe-file *compile-file-truename*))))
+                 (and compiled (equal (probe-file file) (probe-file compiled))))
          (call "SPAN-START" (call "LOCATION-SPAN" location)))))))
+
+(defun offset-location (offset)
+  "The place OFFSET characters into the buffer or file being compiled."
+  (if swank/sbcl::*buffer-name*
+      (swank/backend:make-location (list :buffer swank/sbcl::*buffer-name*)
+                                   (list :offset swank/sbcl::*buffer-offset* offset))
+      (swank/backend:make-location (list :file (namestring (or *compile-file-truename* *coal-file*)))
+                                   (list :position (1+ offset)))))
+
+(defun coalton-error-offset (condition)
+  "Where in the text being compiled Coalton places its error CONDITION: the
+start of the expression its first note is on."
+  (ignore-errors
+   (coalton-offset (funcall (coalton-symbol "LOCATION" "COALTON-IMPL/SOURCE")
+                            (first (funcall (coalton-symbol "NOTES" "COALTON-IMPL/SOURCE") condition))))))
 
 (defun coalton-error-location (condition)
   (let ((offset (coalton-error-offset condition)))
-    (cond ((null offset)
-           (swank/sbcl::compiler-note-location condition (sb-c::find-error-context nil)))
-          (swank/sbcl::*buffer-name*
-           (swank/backend:make-location (list :buffer swank/sbcl::*buffer-name*)
-                                        (list :offset swank/sbcl::*buffer-offset* offset)))
-          (t
-           (swank/backend:make-location (list :file (namestring *compile-file-truename*))
-                                        (list :position (1+ offset)))))))
+    (if (null offset)
+        (swank/sbcl::compiler-note-location condition (sb-c::find-error-context nil))
+        (offset-location offset))))
+
+(defun coalton-fixes (condition)
+  "The edits Coalton suggests in CONDITION, one for each help note that rewrites
+the text it is on, as plists of :LABEL, :LOCATION, :OLD and :TEXT."
+  (let ((type (coalton-symbol "SOURCE-CONDITION" "COALTON-IMPL/SOURCE")))
+    (when (and type (typep condition type))
+      (flet ((call (name &rest args) (apply (coalton-symbol name "COALTON-IMPL/SOURCE") args)))
+        (ignore-errors
+         (loop for note in (call "NOTES" condition)
+               for location = (call "LOCATION" note)
+               for old = (and (eq (call "NOTE-TYPE" note) :help)
+                              (call "EXTRACT-SOURCE-TEXT" (call "LOCATION-SOURCE" location) (call "LOCATION-SPAN" location)))
+               for new = (and old (funcall (call "REPLACE-FUNCTION" note) old))
+               for offset = (and (stringp new) (string/= new old) (coalton-offset location))
+               when offset
+                 collect (list :label (call "MESSAGE" note) :location (offset-location offset) :old old :text new)))))))
+
+(defun note-with-coalton-fixes (function condition)
+  "Swank's compiler note for CONDITION, with the edits Coalton suggests in it."
+  (let ((note (funcall function condition))
+        (fixes (coalton-fixes (swank/backend::original-condition condition))))
+    (if fixes (append note (list :fixes fixes)) note)))
 
 (defun compile-with-coalton-errors (text function)
   "Calls FUNCTION, a Swank compile of TEXT. A form that Coalton rejects becomes an
@@ -495,15 +602,21 @@ constraint's instance as a further argument, which only Coalton passes."
 
 (defun repl-eval-reporting-coalton-errors (function string)
   "Swank's REPL evaluation of STRING. A form Coalton rejects prints Coalton's
-message in the REPL, which then takes the next input."
-  (multiple-value-bind (result message) (coalton-error-message function string)
-    (if message (write-coalton-error message) result)))
+message in the REPL, which then takes the next input. (help NAME) prints help."
+  (let ((request (swank::with-buffer-syntax () (help-request string))))
+    (if request
+        (swank::with-buffer-syntax () (write-help request))
+        (multiple-value-bind (result message) (coalton-error-message function string)
+          (if message (write-coalton-error message) result)))))
 
 (defun mrepl-eval-reporting-coalton-errors (function string)
   "As REPL-EVAL-REPORTING-COALTON-ERRORS, in an extra REPL, which shows what
 FUNCTION returns as the result."
-  (multiple-value-bind (result message) (coalton-error-message function string)
-    (if message (progn (write-coalton-error message) "") result)))
+  (let ((request (help-request string)))
+    (if request
+        (progn (write-help request) "")
+        (multiple-value-bind (result message) (coalton-error-message function string)
+          (if message (progn (write-coalton-error message) "") result)))))
 
 (defun coal-file-p (pathname)
   (string-equal (pathname-type pathname) "coal"))
@@ -518,7 +631,8 @@ does. A form Coalton rejects becomes an error note on the expression it blames."
     (when (and (coal-file-p pathname) compile make-source error-type)
       (let ((fasl (swank::fasl-pathname pathname options))
             ;; Coalton writes the file out as Lisp and reads it back with the standard syntax.
-            (*readtable* (copy-readtable nil)))
+            (*readtable* (copy-readtable nil))
+            (*coal-file* pathname))
         ;; Coalton names the fasl whether or not the Lisp it wrote compiled.
         (when (probe-file fasl) (delete-file fasl))
         (block compile
@@ -553,7 +667,8 @@ expression its first note is on."
                                 (swank:eval-and-grab-output eval-as-coalton)
                                 (swank:compile-string-for-emacs compile-string-as-coalton)
                                 (swank:compile-file-for-emacs compile-file-as-coalton)
-                                (swank:documentation-symbol document-with-coalton-type))
+                                (swank:documentation-symbol document-with-coalton-type)
+                                (swank::make-compiler-note note-with-coalton-fixes))
         unless (sb-int:encapsulated-p name 'coalton)
           do (sb-int:encapsulate name 'coalton (symbol-function wrapper))))
 

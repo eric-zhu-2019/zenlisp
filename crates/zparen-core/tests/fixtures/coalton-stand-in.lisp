@@ -3,12 +3,13 @@
 
 (defpackage #:coalton-impl/source
   (:use #:cl)
-  (:export #:source-error #:notes #:location #:location-source #:location-span
-           #:source-file-path #:span-start))
+  (:export #:source-error #:source-warning #:notes #:location #:location-source #:location-span
+           #:source-file-path #:span-start #:note-type #:message #:extract-source-text #:docstring))
 
 (defpackage #:coalton
   (:use)
-  (:export #:coalton-toplevel #:coalton #:define #:match #:describe-type-of))
+  (:export #:coalton-toplevel #:coalton #:define #:match #:describe-type-of
+           #:lookup-type #:lookup-class #:kind-of))
 
 (defmacro coalton:define (&rest forms)
   (declare (ignore forms))
@@ -22,13 +23,22 @@
 
 (in-package #:coalton-impl/source)
 
-(defstruct source file-path)
+(defstruct source file-path text)
 (defstruct location source span)
-(defstruct note location)
+(defstruct note location (type :primary) (message "") (replace #'identity))
 (defun span-start (span) (car span))
+(defun replace-function (note) (note-replace note))
+(defun message (note) (note-message note))
+(defun extract-source-text (source span)
+  (subseq (source-text source) (car span) (cdr span)))
 
-(define-condition source-error (error)
-  ((notes :initarg :notes :reader notes))
+(define-condition source-condition ()
+  ((notes :initarg :notes :reader notes)))
+
+(define-condition source-warning (source-condition warning) ()
+  (:report "warn: Unused variable"))
+
+(define-condition source-error (source-condition error) ()
   (:report (lambda (c s)
              (let ((location (note-location (first (notes c)))))
                (format s "error: Ambiguous predicate~%  --> ~a:~a"
@@ -36,12 +46,32 @@
 
 (defmethod location ((note note)) (note-location note))
 
+(defgeneric docstring (entry))
+
 (in-package #:cl-user)
 
 (defvar cl-user::*compiled* nil)
 
+(defun warned (forms)
+  "As Coalton warns of an unused variable, with help to prefix it with _: here the variable in (UNUSED NAME) in FORMS."
+  (let* ((file *compile-file-truename*)
+         (text (and file (uiop:read-file-string file)))
+         (at (and text (search "(unused " text))))
+    (when (and at (search "(UNUSED" (prin1-to-string forms)))
+      (let* ((start (+ at (length "(unused ")))
+             (location (coalton-impl/source::make-location
+                        :source (coalton-impl/source::make-source
+                                 :file-path (or (getf sb-c::*source-plist* :emacs-buffer) file) :text text)
+                        :span (cons start (position #\) text :start start)))))
+        (warn 'coalton-impl/source:source-warning
+              :notes (list (coalton-impl/source::make-note :location location :message "variable defined here")
+                           (coalton-impl/source::make-note :location location :type :help
+                                                            :message "prefix the variable with '_' to declare it unused"
+                                                            :replace (lambda (name) (concatenate 'string "_" name)))))))))
+
 (defun blamed (forms)
   "Where Coalton would blame a call to BAD in FORMS: in the file being compiled, when there is one."
+  (warned forms)
   (when (search "(BAD" (prin1-to-string forms))
     (let* ((file *compile-file-truename*)
            (text (and file (uiop:read-file-string file))))
@@ -69,8 +99,42 @@
   (case symbol
     (cl-user::add2 (format t "(INTEGER → INTEGER)~%"))
     (cl-user::scale (format t "∀ :A. NUM :A ⇒ :A → :A~%"))
+    (cl-user::box-of (format t "∀ :A. :A → BOX :A~%"))
+    (cl-user::area (format t "∀ :A. SHAPE :A ⇒ :A → DOUBLE-FLOAT~%"))
     (t (write-line "unknown")))
   (values))
+
+;;; Coalton's environment: a type BOX with the constructor BOX-OF, and a class SHAPE with the method AREA.
+
+(defpackage #:coalton-impl/typechecker
+  (:use #:cl)
+  (:export #:type-entry-constructors #:ty-class-predicate #:ty-class-superclasses
+           #:ty-class-unqualified-methods #:ty-class-method-name))
+
+(in-package #:coalton-impl/typechecker)
+
+(defstruct (printed (:constructor printed (text))) text)
+(defmethod print-object ((p printed) stream) (write-string (printed-text p) stream))
+(defstruct type-entry constructors docstring)
+(defstruct ty-class predicate superclasses unqualified-methods docstring)
+(defstruct ty-class-method name)
+(defmethod coalton-impl/source:docstring ((e type-entry)) (type-entry-docstring e))
+(defmethod coalton-impl/source:docstring ((e ty-class)) (ty-class-docstring e))
+
+(defun coalton:lookup-type (name)
+  (when (eq name 'cl-user::box)
+    (make-type-entry :constructors '(cl-user::box-of) :docstring "A box holding one value.")))
+
+(defun coalton:lookup-class (name)
+  (when (eq name 'cl-user::shape)
+    (make-ty-class :predicate (printed "SHAPE :A") :superclasses nil
+                   :unqualified-methods (list (make-ty-class-method :name 'cl-user::area))
+                   :docstring "Things with an area.")))
+
+(defun coalton:kind-of (name)
+  (when (eq name 'cl-user::box) (printed "* → *")))
+
+(in-package #:cl-user)
 
 ;;; Coalton's compiler for .coal files: a package form, then definitions.
 ;;; Here (define name value) defines a variable, and a call to BAD is an error.
