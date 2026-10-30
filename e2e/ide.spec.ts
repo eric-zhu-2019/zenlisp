@@ -1944,6 +1944,18 @@ test("K shows a symbol's documentation in a popup at the cursor", async ({ page 
   await expect(tip).toBeVisible({ timeout: 10_000 });
   await page.keyboard.press("Escape");
   await expect(tip, "and so does Escape").toHaveCount(0);
+  const hover = editor.locator(".cm-tooltip-hover");
+  const defun = editor.locator(".cm-line", { hasText: "(defun greet" }).getByText("defun");
+  await defun.hover();
+  await expect(hover, "the mouse shows a doc").toBeVisible({ timeout: 10_000 });
+  await page.keyboard.press("Shift+K");
+  await expect(tip).toBeVisible({ timeout: 10_000 });
+  await expect(hover, "K's doc replaces the mouse's").toHaveCount(0);
+  await page.mouse.move(0, 0);
+  await defun.hover();
+  await page.waitForTimeout(1500);
+  await expect(hover, "the mouse shows no second doc while K's shows").toHaveCount(0);
+  await page.keyboard.press("Escape");
   await expect(page.locator(".statusbar .mode")).toHaveText("normal");
   await expect(editor.locator(".cm-content"), "nothing is added to the code").not.toContainText("Lambda-list");
 });

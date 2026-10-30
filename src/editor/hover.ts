@@ -1,5 +1,5 @@
 import { StateEffect, StateField } from "@codemirror/state";
-import { EditorView, hoverTooltip, showTooltip, type Tooltip } from "@codemirror/view";
+import { EditorView, closeHoverTooltips, hoverTooltip, showTooltip, type Tooltip } from "@codemirror/view";
 import * as actions from "../actions";
 import { isSymbolChar, packageAt, symbolAt } from "../lisp/forms";
 import { formAt, parse } from "../lisp/tree";
@@ -35,6 +35,8 @@ async function describe(symbol: string, pkg: string): Promise<string | null> {
 
 export const lispHover = hoverTooltip(
   async (view, pos): Promise<Tooltip | null> => {
+    // K's box already shows a doc.
+    if (view.state.field(docTip, false)) return null;
     const text = view.state.doc.toString();
     if (!isSymbolChar(text[pos] ?? "") && !isSymbolChar(text[pos - 1] ?? "")) return null;
     const node = formAt(parse(text), pos);
@@ -105,7 +107,9 @@ export function showDocTip(view: EditorView): boolean {
   const sym = symbolAt(text, pos) ?? symbolAt(text, pos + 1);
   if (!sym) return false;
   void describe(sym.name, packageAt(text, pos) ?? "COMMON-LISP-USER").then((doc) =>
-    view.dispatch({ effects: setDocTip.of({ from: sym.from, to: sym.to, text: doc ?? `No documentation for ${sym.name}` }) }),
+    view.dispatch({
+      effects: [setDocTip.of({ from: sym.from, to: sym.to, text: doc ?? `No documentation for ${sym.name}` }), closeHoverTooltips],
+    }),
   );
   return true;
 }
