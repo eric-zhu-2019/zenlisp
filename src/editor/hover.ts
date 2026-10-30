@@ -53,7 +53,8 @@ export const lispHover = hoverTooltip(
         const dom = document.createElement("div");
         dom.className = "cm-lisp-doc";
         dom.textContent = doc;
-        return { dom };
+        // The box starts at the symbol's end, so it hides less of the text above.
+        return { dom, getCoords: () => view.coordsAtPos(sym.to, -1)! };
       },
     };
   },

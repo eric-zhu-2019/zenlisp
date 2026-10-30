@@ -1962,6 +1962,8 @@ test("K shows a symbol's documentation in a popup at the cursor", async ({ page 
   const defun = editor.locator(".cm-line", { hasText: "(defun greet" }).getByText("defun");
   await defun.hover();
   await expect(hover, "the mouse shows a doc").toBeVisible({ timeout: 10_000 });
+  const [word, box] = [await defun.boundingBox(), await hover.boundingBox()];
+  expect(Math.abs(box!.x - (word!.x + word!.width)), "the box starts at the word's end").toBeLessThan(3);
   await page.keyboard.press("Shift+K");
   await expect(tip).toBeVisible({ timeout: 10_000 });
   await expect(hover, "K's doc replaces the mouse's").toHaveCount(0);
