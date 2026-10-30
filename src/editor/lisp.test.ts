@@ -25,6 +25,16 @@ describe("Lisp highlighting", () => {
     expect(s["Integer"]).toBe("variableName");
   });
 
+  it("colors a .coal file's package form and its clauses", () => {
+    const s = styles("(package zen-coal (import coalton-prelude) (export double))");
+    expect(s).toMatchObject({ package: "keyword", import: "keyword", export: "keyword", "zen-coal": "variableName" });
+  });
+
+  it("leaves Lisp's import and export alone outside a package form", () => {
+    expect(styles("(export '(double))")).toMatchObject({ export: "variableName" });
+    expect(styles("(progn (package x) (export y))")).toMatchObject({ package: "variableName", export: "variableName" });
+  });
+
   it("leaves the same names alone where they are not a form's head", () => {
     expect(styles("(list match fn)")).toMatchObject({ list: "variableName", match: "variableName", fn: "variableName" });
   });

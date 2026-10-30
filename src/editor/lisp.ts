@@ -7,12 +7,25 @@ import { tags as t } from "@lezer/highlight";
 /** Coalton's operators the Common Lisp mode does not already color, as heads of forms. */
 const COALTON_FORMS = /^(coalton-toplevel|coalton|declare|match|fn|lisp|rec|for\*?|break|continue|return|derive|repr|monomorphize|specialize|inline|noinline|handle|protect|resumable|resume-to)$/;
 
+/** A .coal file's package form and its clauses, which Lisp has no form for at the top level. */
+const COALTON_PACKAGE_CLAUSES = /^(import|export|import-from|shadow)$/;
+
+type Context = { prev: Context | null; head?: string };
+
 export const lispMode: typeof commonLisp = {
   ...commonLisp,
   token(stream, state) {
     const afterOpen = (state as { lastType: string | null }).lastType === "open";
     const style = commonLisp.token(stream, state);
-    return style === "variableName" && afterOpen && COALTON_FORMS.test(stream.current()) ? "keyword" : style;
+    if (style !== "variableName" || !afterOpen) return style;
+    const ctx = (state as { ctx: Context }).ctx;
+    const name = stream.current();
+    ctx.head = name;
+    if (COALTON_FORMS.test(name)) return "keyword";
+    const topLevel = ctx.prev !== null && ctx.prev.prev === null;
+    if (name === "package" && topLevel) return "keyword";
+    if (COALTON_PACKAGE_CLAUSES.test(name) && ctx.prev?.head === "package" && ctx.prev.prev?.prev === null) return "keyword";
+    return style;
   },
 };
 
