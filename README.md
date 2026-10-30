@@ -197,7 +197,9 @@ In the editor and the REPL:
   the expression Coalton blames. The note shows Coalton's message without its
   copy of the source. **Copy** and **Ask AI to fix** give the full message.
   A type error in a form typed in the REPL prints Coalton's message in the
-  REPL, and the debugger stays closed.
+  REPL, and the debugger stays closed. A Lisp call such as `(scale 10)` to a
+  Coalton function whose type has a constraint, such as `Num :a`, opens the
+  debugger, and the REPL first prints how to call it with `coalton`.
 - **Color.** Coalton's operators, such as `define`, `match` and `declare`, have
   their own color. ZParen reads `.ct` and `.coal` files as Lisp source.
 

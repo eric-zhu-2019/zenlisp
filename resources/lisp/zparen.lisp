@@ -342,15 +342,19 @@ expands inside its Coalton macro, so the compiler still places notes on it."
 
 (defun coalton-type (symbol-name)
   "The Coalton type of the value SYMBOL-NAME names, as Coalton prints it, or NIL."
+  (ignore-errors
+   (swank::with-buffer-syntax ()
+     (multiple-value-bind (symbol found) (swank::parse-symbol symbol-name)
+       (when found (symbol-coalton-type symbol))))))
+
+(defun symbol-coalton-type (symbol)
+  "The Coalton type of the value SYMBOL names, as Coalton prints it in the current package, or NIL."
   (let ((describe (and (find-package "COALTON") (find-symbol "DESCRIBE-TYPE-OF" "COALTON"))))
     (when (and describe (fboundp describe))
       (ignore-errors
-       (swank::with-buffer-syntax ()
-         (multiple-value-bind (symbol found) (swank::parse-symbol symbol-name)
-           (when found
-             (let ((type (string-trim '(#\Space #\Newline)
-                                      (with-output-to-string (*standard-output*) (funcall describe symbol)))))
-               (unless (member type '("" "unknown" "macro") :test #'string=) type)))))))))
+       (let ((type (string-trim '(#\Space #\Newline)
+                                (with-output-to-string (*standard-output*) (funcall describe symbol)))))
+         (unless (member type '("" "unknown" "macro") :test #'string=) type))))))
 
 (defun document-with-coalton-type (function symbol-name)
   (let ((doc (funcall function symbol-name))
@@ -454,16 +458,34 @@ are left to the compiler, as before."
   (let ((session (find-symbol "*ASDF-SESSION*" "ASDF/SESSION")))
     (or *compile-file-truename* (and session (boundp session) (symbol-value session)))))
 
-(defun coalton-error-message (function &rest args)
-  "Calls FUNCTION with ARGS. When Coalton rejects a form it evaluates, returns
+(defun coalton-error-message (function string)
+  "Calls FUNCTION with STRING. When Coalton rejects a form it evaluates, returns
 NIL and Coalton's message as a second value, rather than opening the debugger.
 A form in a file being compiled still opens it."
   (let ((error-type (coalton-symbol "SOURCE-ERROR" "COALTON-IMPL/SOURCE")))
     (block eval
       (handler-bind ((error (lambda (c)
                               (when (and error-type (typep c error-type) (not (compiling-a-file-p)))
-                                (return-from eval (values nil (princ-to-string c)))))))
-        (values (apply function args) nil)))))
+                                (return-from eval (values nil (princ-to-string c))))))
+                     (program-error (lambda (c)
+                                      (declare (ignore c))
+                                      (let ((hint (coalton-call-hint string)))
+                                        (when hint (write-coalton-error hint))))))
+        (values (funcall function string) nil)))))
+
+(defun coalton-call-hint (string)
+  "When STRING is one Lisp call to a Coalton function whose type has a
+constraint, why the call fails: Coalton compiles such a function to take each
+constraint's instance as a further argument, which only Coalton passes."
+  (ignore-errors
+   (let ((*read-eval* nil))
+     (multiple-value-bind (form end) (read-from-string string)
+       (when (and (consp form) (symbolp (car form))
+                  (eq (read-from-string string nil string :start end) string))
+         (let ((type (symbol-coalton-type (car form))))
+           (when (and type (or (search "⇒" type) (search "=>" type)))
+             (format nil "~(~a~) is a Coalton function of type ~a.~%Call it as (coalton ~a)."
+                     (car form) type (string-trim '(#\Space #\Tab #\Newline) string)))))))))
 
 (defun write-coalton-error (message)
   (fresh-line)

@@ -521,6 +521,31 @@ async fn coalton_forms_run_inside_coalton_and_hovers_show_coalton_types() {
     let _ = Op::DebuggerAbort { thread: d.thread }.run(c).await;
     let _ = pending.await;
 
+    // A Lisp call to a Coalton function that takes an instance argument prints how to call it, and the debugger still opens.
+    for (input, hint) in [
+        ("(scale 10)", Some("; scale is a Coalton function of type ∀ :A. NUM :A ⇒ :A → :A.\n; Call it as (coalton (scale 10)).\n")),
+        ("(add2 1 2)", None),
+    ] {
+        let mut events = c.subscribe();
+        let conn = c.clone();
+        let pending = tokio::spawn(async move { cl(|package| Op::ReplEval { input: input.into(), package }).run(&conn).await });
+        let mut output = String::new();
+        let d = loop {
+            match tokio::time::timeout(Duration::from_secs(10), events.recv()).await.expect("the debugger opens").unwrap() {
+                Event::Output { text, target: None } => output.push_str(&text),
+                Event::Debug(d) => break d,
+                _ => {}
+            }
+        };
+        assert!(d.condition.contains("invalid number of arguments"), "{}", d.condition);
+        match hint {
+            Some(hint) => assert!(output.contains(hint), "{output:?}"),
+            None => assert!(!output.contains("Coalton function"), "{output:?}"),
+        }
+        let _ = Op::DebuggerAbort { thread: d.thread }.run(c).await;
+        let _ = pending.await;
+    }
+
     let Reply::Compiled { success, notes, .. } = run(cl(|package| Op::CompileForm {
         form: "(coalton:define w 3)".into(),
         buffer: "scratch".into(),

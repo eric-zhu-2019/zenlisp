@@ -62,10 +62,14 @@
 
 (defun cl-user::add2 (x) (+ x 2))
 
+;; As Coalton compiles a function with a constraint: its instance is the first argument.
+(defun cl-user::scale (num x) (declare (ignore num)) (* x 2))
+
 (defun coalton:describe-type-of (symbol)
-  (if (eq symbol 'cl-user::add2)
-      (format t "(INTEGER → INTEGER)~%")
-      (write-line "unknown"))
+  (case symbol
+    (cl-user::add2 (format t "(INTEGER → INTEGER)~%"))
+    (cl-user::scale (format t "∀ :A. NUM :A ⇒ :A → :A~%"))
+    (t (write-line "unknown")))
   (values))
 
 ;;; Coalton's compiler for .coal files: a package form, then definitions.
