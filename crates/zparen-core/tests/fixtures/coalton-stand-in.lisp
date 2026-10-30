@@ -9,7 +9,7 @@
 (defpackage #:coalton
   (:use)
   (:export #:coalton-toplevel #:coalton #:define #:match #:describe-type-of
-           #:lookup-type #:lookup-class #:kind-of))
+           #:lookup-type #:lookup-class #:kind-of #:shape))
 
 (defmacro coalton:define (&rest forms)
   (declare (ignore forms))
@@ -104,7 +104,7 @@
     (t (write-line "unknown")))
   (values))
 
-;;; Coalton's environment: a type BOX with the constructor BOX-OF, and a class SHAPE with the method AREA.
+;;; Coalton's environment: a type BOX with the constructor BOX-OF, and a class SHAPE, exported as Coalton's are, with the method AREA.
 
 (defpackage #:coalton-impl/typechecker
   (:use #:cl)
@@ -126,7 +126,7 @@
     (make-type-entry :constructors '(cl-user::box-of) :docstring "A box holding one value.")))
 
 (defun coalton:lookup-class (name)
-  (when (eq name 'cl-user::shape)
+  (when (eq name 'coalton:shape)
     (make-ty-class :predicate (printed "SHAPE :A") :superclasses nil
                    :unqualified-methods (list (make-ty-class-method :name 'cl-user::area))
                    :docstring "Things with an area.")))

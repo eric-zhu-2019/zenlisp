@@ -194,7 +194,8 @@ In the editor and the REPL:
 - **See types.** Hover and `K` show the Coalton type of a name, such as
   `∀ :A. NUM :A ⇒ :A → :A`. On a type, such as `Optional`, they show its kind,
   documentation and constructors. On a class, such as `Num`, they show its
-  superclasses, documentation and methods.
+  superclasses, documentation and methods. The search in the Documentation
+  panel finds Coalton types and classes too.
 - **Ask for help.** `(help Optional)` in the REPL prints the same, and for a
   value it prints its type and documentation. For a name that Coalton does not
   know, it prints what Lisp knows. `(help)` says how to use it. A `help`

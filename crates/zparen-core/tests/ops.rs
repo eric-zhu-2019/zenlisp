@@ -623,8 +623,13 @@ async fn coalton_forms_run_inside_coalton_and_hovers_show_coalton_types() {
         text.contains("Coalton type BOX :: * → *\n\nA box holding one value.\n\nConstructors:\n  BOX-OF :: ∀ :A. :A → BOX :A") && !text.contains("Not documented"),
         "{text}"
     );
-    let Reply::Text { text } = run(cl(|package| Op::Describe { symbol: "shape".into(), package })).await else { panic!() };
+    let Reply::Text { text } = run(cl(|package| Op::Describe { symbol: "coalton:shape".into(), package })).await else { panic!() };
     assert!(text.contains("Coalton class SHAPE :A\n\nThings with an area.\n\nMethods:\n  AREA :: ∀ :A. SHAPE :A ⇒ :A → DOUBLE-FLOAT"), "{text}");
+
+    // The symbol search lists Coalton classes and types, which have no meaning in Lisp.
+    let Reply::Symbols { items } = run(Op::Apropos { query: "shape".into(), package: None }).await else { panic!() };
+    let shape = items.iter().find(|i| i.name == "COALTON:SHAPE").unwrap_or_else(|| panic!("{items:?}"));
+    assert_eq!((shape.kinds.as_slice(), shape.doc.as_deref()), (["coalton-class".to_string()].as_slice(), Some("Things with an area.")));
 
     // (help NAME) in the REPL prints the same, or what Lisp knows of NAME; (help) says how to use it.
     let repl_output = |input: &'static str| {

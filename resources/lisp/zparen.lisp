@@ -403,6 +403,24 @@ docstring and methods. NIL when SYMBOL names neither."
                                          (coalton-entry "TY-CLASS-UNQUALIFIED-METHODS" class))))))))
          (when parts (format nil "~{~a~^~2%~}" parts)))))))
 
+(defun describe-briefly-with-coalton (function symbol)
+  "Swank's one-line description of SYMBOL for its symbol search, which lists
+only symbols it can describe, with what SYMBOL names in Coalton: a type or a
+class, which Lisp knows nothing of."
+  (let ((entries
+          (ignore-errors
+           (loop for (lookup kind) in '(("LOOKUP-TYPE" :coalton-type) ("LOOKUP-CLASS" :coalton-class))
+                 for function = (coalton-symbol lookup "COALTON")
+                 for entry = (and function (funcall function symbol))
+                 when entry
+                   collect kind
+                   and collect (let ((doc (funcall (coalton-symbol "DOCSTRING" "COALTON-IMPL/SOURCE") entry)))
+                                 (if doc (subseq doc 0 (position #\Newline doc)) :not-documented))))))
+    (let ((description (funcall function symbol)))
+      (cond ((null entries) description)
+            (description (append description entries))
+            (t (list* :designator (swank::to-string symbol) entries))))))
+
 (defun coalton-signature (symbol)
   (format nil "~s :: ~a" symbol (symbol-coalton-type symbol)))
 
@@ -668,7 +686,8 @@ expression its first note is on."
                                 (swank:compile-string-for-emacs compile-string-as-coalton)
                                 (swank:compile-file-for-emacs compile-file-as-coalton)
                                 (swank:documentation-symbol document-with-coalton-type)
-                                (swank::make-compiler-note note-with-coalton-fixes))
+                                (swank::make-compiler-note note-with-coalton-fixes)
+                                (swank::briefly-describe-symbol-for-emacs describe-briefly-with-coalton))
         unless (sb-int:encapsulated-p name 'coalton)
           do (sb-int:encapsulate name 'coalton (symbol-function wrapper))))
 
