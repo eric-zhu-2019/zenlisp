@@ -103,8 +103,48 @@ function HyperSpecPage({ page }: { page: string }) {
   return <iframe className="hyperspec" title="Common Lisp HyperSpec" src={hyperspecUrl(page)} data-testid="hyperspec" />;
 }
 
+const REFERENCE = `${COALTON_SITE}reference/`;
+let headingIds: Promise<Map<string, string>> | null = null;
+
+/** The reference's anchors, each with the id of the heading it is in. */
+function referenceHeadingIds(): Promise<Map<string, string>> {
+  headingIds ??= fetch(REFERENCE)
+    .then((r) => (r.ok ? r.text() : Promise.reject(new Error(r.statusText))))
+    .then((html) => {
+      const ids = new Map<string, string>();
+      for (const a of new DOMParser().parseFromString(html, "text/html").querySelectorAll("a[name]")) {
+        const heading = a.closest("h1, h2, h3, h4, h5, h6");
+        if (heading?.id) ids.set(a.getAttribute("name")!, heading.id);
+      }
+      return ids;
+    })
+    .catch(() => {
+      headingIds = null;
+      return new Map();
+    });
+  return headingIds;
+}
+
+/** The address to show for a part of the reference. WebKit scrolls past a heading when the address names the
+ * anchor at the heading's end, as the reference's own links do, but not when it names the heading's id. */
+async function landing(url: string): Promise<string> {
+  if (!url.startsWith(`${REFERENCE}#`)) return url;
+  const id = (await referenceHeadingIds()).get(url.slice(REFERENCE.length + 1));
+  return id ? `${REFERENCE}#${id}` : url;
+}
+
 function CoaltonManualPage({ url }: { url: string }) {
-  return <iframe className="hyperspec" title="Coalton manual" src={url} data-testid="coalton-manual" />;
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    setSrc(null);
+    landing(url).then((u) => live && setSrc(u));
+    return () => {
+      live = false;
+    };
+  }, [url]);
+  if (!src) return <div className="dim">Loading the manual…</div>;
+  return <iframe className="hyperspec" title="Coalton manual" src={src} data-testid="coalton-manual" />;
 }
 
 function InstallHyperSpec({ symbol, onInstalled }: { symbol: string; onInstalled: () => void }) {
