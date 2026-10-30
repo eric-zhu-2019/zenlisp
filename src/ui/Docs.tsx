@@ -70,7 +70,9 @@ function Apropos({ onPick }: { onPick: (name: string) => void }) {
   useEffect(() => {
     if (query.trim().length < 2) return setItems(null);
     const t = setTimeout(async () => {
-      const r = await actions.lisp({ op: "apropos", query: query.trim(), package: null }).catch(() => null);
+      // Swank matches a name only, so a package prefix, as in coalton:boolean, names the package to search.
+      const [, pkg, name] = /^([^:\s]+)::?(.*)$/.exec(query.trim()) ?? [null, null, query.trim()];
+      const r = await actions.lisp({ op: "apropos", query: name, package: pkg }).catch(() => null);
       setItems(r?.kind === "symbols" ? r.items.slice(0, 60) : []);
     }, 220);
     return () => clearTimeout(t);

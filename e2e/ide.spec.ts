@@ -1456,6 +1456,9 @@ test("a Coalton type error from ⌘Enter is a note on the expression Coalton bla
   await expect(docs.getByLabel("Coalton manual"), "the panel's own lookups run as Lisp").toBeVisible();
   await expect(page.getByTestId("debugger"), "and open no debugger").toHaveCount(0);
   await expect(page.locator(".repl-buffer"), "nor print in the REPL").not.toContainText("Unknown variable");
+  await docs.getByPlaceholder("Search symbols in every package").fill("coalton:sha");
+  await expect(docs.getByTestId("apropos").locator("li"), "a package prefix searches that package").toHaveText([/^coalton:shape/]);
+  await docs.getByPlaceholder("Search symbols in every package").fill("");
   await docs.getByRole("tab", { name: "Docstring" }).click();
   await expect(docs.locator(".docs-text")).toContainText("Coalton class SHAPE :A");
   await docs.getByRole("button", { name: "Package coalton" }).click();
