@@ -1442,9 +1442,18 @@ test("a Coalton type error from ⌘Enter is a note on the expression Coalton bla
   const docs = page.getByTestId("docs");
   await expect(page.frameLocator("[data-testid=coalton-manual]").locator("h1")).toHaveText("Coalton manual");
   await expect(docs.getByTestId("coalton-manual")).toHaveAttribute("src", "https://coalton-lang.github.io/manual/operators/define/");
+  // The REPL moves to a package whose AND and LET are Coalton's, as in a package that uses Coalton's prelude.
+  await page.locator(".panel-tab", { hasText: "REPL" }).click();
+  await replEval(page, "(defpackage #:zen-ct (:use #:cl) (:shadow #:and #:let))");
+  await replEval(page, "(setf (get 'zen-ct::and :coalton-repl-context) :expression (get 'zen-ct::let :coalton-repl-context) :expression)");
+  await replEval(page, "(in-package #:zen-ct)");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { zenRepl: { state: { doc: { toString(): string } } } }).zenRepl.state.doc.toString())).toMatch(/ZEN-CT> $/);
   await docs.getByPlaceholder("Search symbols in every package").fill("shape");
   await docs.getByTestId("apropos").locator("li", { hasText: "coalton:shape" }).click();
   await expect(docs.getByTestId("coalton-manual")).toHaveAttribute("src", "https://coalton-lang.github.io/reference/#coalton-shape-class");
+  await expect(docs.getByLabel("Coalton manual"), "the panel's own lookups run as Lisp").toBeVisible();
+  await expect(page.getByTestId("debugger"), "and open no debugger").toHaveCount(0);
+  await expect(page.locator(".repl-buffer"), "nor print in the REPL").not.toContainText("Unknown variable");
   await docs.getByRole("tab", { name: "Docstring" }).click();
   await expect(docs.locator(".docs-text")).toContainText("Coalton class SHAPE :A");
   await docs.getByRole("button", { name: "Package coalton" }).click();

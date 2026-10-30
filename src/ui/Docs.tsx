@@ -41,15 +41,19 @@ function parseManual(value: string): Shown["manual"] {
 
 const lispString = (s: string) => `"${s.replace(/[\\"]/g, "\\$&")}"`;
 
+/** ZParen's own forms run in CL-USER, as in a package that uses Coalton they would run as Coalton. */
 async function lookUp(symbol: string, pkg: string): Promise<Shown> {
-  const standard = `(let ((s (ignore-errors (let ((*read-eval* nil)) (read-from-string ${lispString(symbol)})))))
+  const standard = `(let ((s (ignore-errors (let ((*read-eval* nil) (*package* (or (find-package ${lispString(pkg)}) *package*)))
+                                   (read-from-string ${lispString(symbol)})))))
   (and s (symbolp s) (eq (symbol-package s) (find-package "COMMON-LISP"))))`;
   const [described, arglist, hs, cl, coalton] = await Promise.all([
     actions.lisp({ op: "describe", symbol, package: pkg }).catch(() => null),
     actions.lisp({ op: "autodoc", form: [symbol, "", { cursor: true }], package: pkg }).catch(() => null),
     actions.request({ type: "hyperspec", symbol }).catch(() => null),
-    actions.lisp({ op: "eval", form: standard, package: pkg }).catch(() => null),
-    actions.lisp({ op: "eval", form: `(zparen::coalton-manual-page-named ${lispString(symbol)})`, package: pkg }).catch(() => null),
+    actions.lisp({ op: "eval", form: standard, package: "COMMON-LISP-USER" }).catch(() => null),
+    actions
+      .lisp({ op: "eval", form: `(zparen::coalton-manual-page-named ${lispString(symbol)} ${lispString(pkg)})`, package: "COMMON-LISP-USER" })
+      .catch(() => null),
   ]);
   return {
     doc: described?.kind === "text" ? trimDoc(described.text, Infinity) : null,
@@ -146,7 +150,7 @@ export function DocsPanel() {
     setReading(null);
     let live = true;
     actions
-      .lisp({ op: "eval", form: `(and (find-package "COALTON") t)`, package: useStore.getState().package })
+      .lisp({ op: "eval", form: `(and (find-package "COALTON") t)`, package: "COMMON-LISP-USER" })
       .then((r) => live && setCoaltonLoaded(r.kind === "evaluated" && r.value === "T"))
       .catch(() => {});
     return () => {

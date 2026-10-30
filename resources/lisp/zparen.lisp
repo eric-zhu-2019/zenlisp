@@ -496,12 +496,12 @@ of the method's type, as in Num :a for fromInt."
                                        :key (lambda (method) (coalton-entry "TY-CLASS-METHOD-NAME" method))))
                  return class-name))))))
 
-(defun coalton-manual-page-named (string)
-  "The part of Coalton's manual about the symbol STRING names in the current
-package, as a list of its address and, for a reference entry, the name and
-address of its package's part of the reference. NIL when the manual has none."
+(defun coalton-manual-page-named (string &optional (package *package*))
+  "The part of Coalton's manual about the symbol STRING names in PACKAGE, as a
+list of its address and, for a reference entry, the name and address of its
+package's part of the reference. NIL when the manual has none."
   (ignore-errors
-   (let ((symbol (let ((*read-eval* nil)) (read-from-string string))))
+   (let ((symbol (let ((*read-eval* nil) (*package* (or (find-package package) *package*))) (read-from-string string))))
      (when (symbolp symbol)
        (multiple-value-bind (page package) (coalton-manual-page symbol)
          (when page
