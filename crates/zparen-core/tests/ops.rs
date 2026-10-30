@@ -631,13 +631,22 @@ async fn coalton_forms_run_inside_coalton_and_hovers_show_coalton_types() {
     let shape = items.iter().find(|i| i.name == "COALTON:SHAPE").unwrap_or_else(|| panic!("{items:?}"));
     assert_eq!((shape.kinds.as_slice(), shape.doc.as_deref()), (["coalton-class".to_string()].as_slice(), Some("Things with an area.")));
 
-    // Coalton's manual has a page for each operator and an entry for each type, class and function of its library.
-    for (name, page) in [
-        ("coalton:define", "\"https://coalton-lang.github.io/manual/operators/define/\""),
-        ("coalton:shape", "\"https://coalton-lang.github.io/reference/#coalton-shape-class\""),
-        ("add2", "NIL"),
+    // Coalton's manual has a page for each operator and an entry for each type, class and function of its library,
+    // which is in its package's part of the reference.
+    for (name, parts) in [
+        ("coalton:define", &["(\"https://coalton-lang.github.io/manual/operators/define/\")"][..]),
+        (
+            "coalton:shape",
+            &[
+                "(\"https://coalton-lang.github.io/reference/#coalton-shape-class\"",
+                "\"coalton\"",
+                "\"https://coalton-lang.github.io/reference/#coalton-package\")",
+            ][..],
+        ),
+        ("add2", &["NIL"][..]),
     ] {
-        assert_eq!(eval(&format!("(zparen::coalton-manual-page-named {name:?})")).await, page, "{name}");
+        let value = eval(&format!("(zparen::coalton-manual-page-named {name:?})")).await;
+        assert!(parts.iter().all(|p| value.contains(p)), "{name}: {value}");
     }
 
     // (help NAME) in the REPL prints the same, or what Lisp knows of NAME; (help) says how to use it.

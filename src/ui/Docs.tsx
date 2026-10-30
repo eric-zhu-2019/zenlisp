@@ -12,9 +12,32 @@ type Shown = {
   doc: string | null;
   standard: boolean;
   hyperspec: { installed: boolean; page: string | null };
-  /** The address of Coalton's manual on the symbol, for Coalton's operators and library. */
-  manual: string | null;
+  /** Coalton's manual on the symbol, for Coalton's operators and library, and the package a library entry is in. */
+  manual: { page: string; packageName: string | null; packagePage: string | null } | null;
 };
+
+const COALTON_SITE = "https://coalton-lang.github.io/";
+
+/** The parts of Coalton's manual that are about no one symbol. */
+const COALTON_PAGES: [string, string][] = [
+  ["Manual", "manual/"],
+  ["Introduction", "manual/topics/introduction/"],
+  ["Whirlwind tour", "manual/topics/whirlwind-tour/"],
+  ["Operators", "manual/operators/"],
+  ["Library reference", "reference/"],
+  ["Lisp interop", "manual/topics/lisp-interop/"],
+  ["Macros", "manual/topics/macros/"],
+  ["Debugging", "manual/topics/debugging/"],
+  ["Configuring Coalton", "manual/topics/configuring-coalton/"],
+  ["Parallel programming", "manual/topics/parallel-programming/"],
+];
+
+/** The page, package name and package page `zparen::coalton-manual-page-named` prints, as a list of strings or NIL. */
+function parseManual(value: string): Shown["manual"] {
+  const [page, packageName, packagePage] = [...value.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+  if (!page?.startsWith(COALTON_SITE)) return null;
+  return { page, packageName: packageName ?? null, packagePage: packagePage?.startsWith(COALTON_SITE) ? packagePage : null };
+}
 
 const lispString = (s: string) => `"${s.replace(/[\\"]/g, "\\$&")}"`;
 
@@ -33,7 +56,7 @@ async function lookUp(symbol: string, pkg: string): Promise<Shown> {
     arglist: arglist?.kind === "arglist" && arglist.text.startsWith("(") ? arglist.text : null,
     standard: cl?.kind === "evaluated" && cl.value === "T",
     hyperspec: hs?.type === "hyperspec" ? { installed: hs.installed, page: hs.page } : { installed: false, page: null },
-    manual: coalton?.kind === "evaluated" && /^"https:\/\/coalton-lang\.github\.io\/[^"]*"$/.test(coalton.value) ? coalton.value.slice(1, -1) : null,
+    manual: coalton?.kind === "evaluated" ? parseManual(coalton.value) : null,
   };
 }
 
@@ -115,6 +138,21 @@ export function DocsPanel() {
   const [shown, setShown] = useState<Shown | null>(null);
   const [nonce, setNonce] = useState(0);
   const [view, setView] = useState<"hyperspec" | "docstring">("hyperspec");
+  /** A page of Coalton's manual chosen to read, which shows in place of the topic until the topic changes. */
+  const [reading, setReading] = useState<string | null>(null);
+  const [coaltonLoaded, setCoaltonLoaded] = useState(false);
+
+  useEffect(() => {
+    setReading(null);
+    let live = true;
+    actions
+      .lisp({ op: "eval", form: `(and (find-package "COALTON") t)`, package: useStore.getState().package })
+      .then((r) => live && setCoaltonLoaded(r.kind === "evaluated" && r.value === "T"))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [topic]);
 
   useEffect(() => {
     if (!topic) return;
@@ -143,7 +181,31 @@ export function DocsPanel() {
         </button>
       </div>
       <Apropos onPick={pick} />
-      {!topic ? (
+      {coaltonLoaded && (
+        <select
+          className="coalton-pages"
+          aria-label="Coalton manual"
+          value=""
+          onChange={(e) => {
+            if (e.target.value) setReading(e.target.value);
+          }}
+        >
+          <option value="">Coalton manual…</option>
+          {COALTON_PAGES.map(([label, path]) => (
+            <option key={path} value={COALTON_SITE + path}>
+              {label}
+            </option>
+          ))}
+        </select>
+      )}
+      {reading ? (
+        <div className="docs-body">
+          <button className="btn" onClick={() => openExternal(reading)}>
+            Open in the browser
+          </button>
+          <CoaltonManualPage url={reading} />
+        </div>
+      ) : !topic ? (
         <div className="docs-empty">
           Put the cursor on a symbol, or search above. Lisp's own documentation for it shows here, with its HyperSpec page for
           Common Lisp symbols and Coalton's manual for Coalton's operators and library.
@@ -173,16 +235,23 @@ export function DocsPanel() {
                 </div>
               )}
               {shown.manual && !shown.hyperspec.page && (
-                <button className="btn" onClick={() => openExternal(shown.manual!)}>
-                  Open the Coalton manual in the browser
-                </button>
+                <div className="docs-card-actions">
+                  {shown.manual.packagePage && (
+                    <button className="btn" onClick={() => setReading(shown.manual!.packagePage)}>
+                      Package {shown.manual.packageName}
+                    </button>
+                  )}
+                  <button className="btn" onClick={() => openExternal(shown.manual!.page)}>
+                    Open in the browser
+                  </button>
+                </div>
               )}
               {shown.doc && ((!shown.hyperspec.page && !shown.manual) || view === "docstring") ? (
                 <pre className="docs-text">{shown.doc}</pre>
               ) : (
                 !shown.doc && !shown.hyperspec.page && !shown.manual && <div className="dim">No documentation.</div>
               )}
-              {shown.manual && !shown.hyperspec.page && view === "hyperspec" && <CoaltonManualPage url={shown.manual} />}
+              {shown.manual && !shown.hyperspec.page && view === "hyperspec" && <CoaltonManualPage url={shown.manual.page} />}
               {shown.hyperspec.page ? (
                 view === "hyperspec" && <HyperSpecPage page={shown.hyperspec.page} />
               ) : (

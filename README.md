@@ -199,8 +199,11 @@ In the editor and the REPL:
 - **Read the manual.** For Coalton's operators, such as `match`, and its
   library, such as `Optional` or `map`, the Documentation panel (⇧⌘D) shows
   the page of [Coalton's manual](https://coalton-lang.github.io/manual/).
-  **Docstring** switches to the text above. The manual is online, so it needs a
-  network connection.
+  **Docstring** switches to the text above. A library name also has a button
+  for its package's part of the reference, such as `coalton/list`. Once Coalton
+  is loaded, the **Coalton manual…** menu opens the manual's other pages, such
+  as Whirlwind tour, Lisp interop, Debugging and the library reference. The
+  manual is online, so it needs a network connection.
 - **Ask for help.** `(help Optional)` in the REPL prints the same, and for a
   value it prints its type and documentation. For a name that Coalton does not
   know, it prints what Lisp knows. `(help)` says how to use it. A `help`

@@ -447,7 +447,8 @@ class, which Lisp knows nothing of."
   "The address of the part of Coalton's manual about SYMBOL: an operator's own
 page, or the reference entry for a type, class or function of Coalton's library,
 where a constructor is under its type and a method under its class. NIL for any
-other symbol, and for a macro, as the reference leaves out most of them."
+other symbol, and for a macro, as the reference leaves out most of them. For a
+reference entry, the second value is the name of the package it is in."
   (let* ((home (symbol-package symbol))
          (name (and home (package-name home))))
     (when (and name (find-package "COALTON")
@@ -463,9 +464,14 @@ other symbol, and for a macro, as the reference leaves out most of them."
                   ((ignore-errors (funcall (coalton-symbol "LOOKUP-CLASS" "COALTON") symbol)) (values symbol "class"))
                   ((and (not (macro-function symbol)) (symbol-coalton-type symbol)) (values symbol "value")))
           (cond (operator (format nil "https://coalton-lang.github.io/manual/operators/~a/" (cdr operator)))
-                (kind (format nil "https://coalton-lang.github.io/reference/#~a-~(~a~)-~a"
-                              (substitute #\- #\/ (string-downcase (package-name (symbol-package symbol))))
-                              (symbol-name symbol) kind))))))))
+                (kind (let ((package (package-name (symbol-package symbol))))
+                        (values (format nil "https://coalton-lang.github.io/reference/#~a-~(~a~)-~a"
+                                        (reference-anchor package) (symbol-name symbol) kind)
+                                package)))))))))
+
+(defun reference-anchor (package-name)
+  "How Coalton's reference names PACKAGE-NAME in its anchors: coalton/list as coalton-list."
+  (substitute #\- #\/ (string-downcase package-name)))
 
 (defun coalton-constructor-type (symbol)
   "The type SYMBOL is a constructor of, or NIL."
@@ -491,10 +497,17 @@ of the method's type, as in Num :a for fromInt."
                  return class-name))))))
 
 (defun coalton-manual-page-named (string)
-  "COALTON-MANUAL-PAGE of the symbol STRING names in the current package."
+  "The part of Coalton's manual about the symbol STRING names in the current
+package, as a list of its address and, for a reference entry, the name and
+address of its package's part of the reference. NIL when the manual has none."
   (ignore-errors
    (let ((symbol (let ((*read-eval* nil)) (read-from-string string))))
-     (and (symbolp symbol) (coalton-manual-page symbol)))))
+     (when (symbolp symbol)
+       (multiple-value-bind (page package) (coalton-manual-page symbol)
+         (when page
+           (list* page (and package (list (string-downcase package)
+                                          (format nil "https://coalton-lang.github.io/reference/#~a-package"
+                                                  (reference-anchor package)))))))))))
 
 (defun coalton-signature (symbol)
   (format nil "~s :: ~a" symbol (symbol-coalton-type symbol)))

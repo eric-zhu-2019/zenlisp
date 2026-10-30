@@ -1447,6 +1447,10 @@ test("a Coalton type error from ⌘Enter is a note on the expression Coalton bla
   await expect(docs.getByTestId("coalton-manual")).toHaveAttribute("src", "https://coalton-lang.github.io/reference/#coalton-shape-class");
   await docs.getByRole("tab", { name: "Docstring" }).click();
   await expect(docs.locator(".docs-text")).toContainText("Coalton class SHAPE :A");
+  await docs.getByRole("button", { name: "Package coalton" }).click();
+  await expect(docs.getByTestId("coalton-manual"), "its package's part of the reference").toHaveAttribute("src", "https://coalton-lang.github.io/reference/#coalton-package");
+  await docs.getByLabel("Coalton manual").selectOption("Debugging");
+  await expect(docs.getByTestId("coalton-manual"), "and the manual's own pages").toHaveAttribute("src", "https://coalton-lang.github.io/manual/topics/debugging/");
   expect(manual.length, "the manual loads in the panel").toBeGreaterThan(0);
 });
 
