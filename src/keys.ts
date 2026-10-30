@@ -62,9 +62,13 @@ const save = (v: EditorView) => {
 
 const stepping = () => activeDebugger(get())?.stepping === true;
 
-function testProject() {
+/** Tests the last system tested, or the first; right after a project opens, its systems are read first. */
+export async function testProject() {
+  if (!get().status.project) return actions.flash("Open a project to run its tests");
+  if (!get().tests && get().systems.length === 0) await actions.refreshSystems();
   const system = get().tests?.system ?? get().systems[0]?.name;
   if (system) return actions.testSystem(system);
+  actions.flash("This project has no system to test", "error");
 }
 
 const toggleRight = (panel: "inspector" | "assistant" | "docs") => set({ right: get().right === panel ? null : panel });
