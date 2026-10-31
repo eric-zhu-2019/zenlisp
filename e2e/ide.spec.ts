@@ -1093,6 +1093,17 @@ test("go to definitions Lisp has not loaded, and see warnings as you type", asyn
   await expect(editor.locator(".cm-lintRange-warning"), "fixing it clears the mark").toHaveCount(0, { timeout: 10_000 });
   expect(readFileSync(join(parent, "zen-live/src/main.lisp"), "utf8"), "checking leaves the file unsaved").not.toContain("shout");
 
+  await page.keyboard.type("o(defun pick (s) (car s s))");
+  await page.keyboard.press("Escape");
+  await expect(editor.locator(".cm-lintRange-warning")).toHaveText("car", { timeout: 10_000 });
+  await editor.locator(".cm-lintRange-warning").hover();
+  await expect(page.locator(".cm-tooltip-hover .cm-tooltip-lint"), "hovering a mark shows its message").toContainText("CAR");
+  await page.waitForTimeout(800);
+  await expect(page.locator(".cm-lisp-doc"), "and not the symbol's documentation with it").toHaveCount(0);
+  await page.mouse.move(5, 5);
+  await page.keyboard.type("dd");
+  await expect(editor.locator(".cm-lintRange-warning")).toHaveCount(0, { timeout: 10_000 });
+
   await page.locator(".tab", { hasText: "main.lisp" }).click();
   await editor.locator(".cm-line", { hasText: "(write-line" }).getByText("write-line").click();
   await page.keyboard.press("Escape");

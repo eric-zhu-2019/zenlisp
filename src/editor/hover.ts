@@ -1,4 +1,5 @@
-import { StateEffect, StateField } from "@codemirror/state";
+import { forEachDiagnostic } from "@codemirror/lint";
+import { type EditorState, StateEffect, StateField } from "@codemirror/state";
 import { EditorView, closeHoverTooltips, hoverTooltip, showTooltip, type Tooltip } from "@codemirror/view";
 import * as actions from "../actions";
 import { isSymbolChar, packageAt, symbolAt } from "../lisp/forms";
@@ -33,10 +34,19 @@ async function describe(symbol: string, pkg: string): Promise<string | null> {
   return doc;
 }
 
+/** Whether hovering `pos` shows a warning or error, by the test the lint hover uses. */
+function hoversDiagnostic(state: EditorState, pos: number, side: -1 | 1): boolean {
+  let found = false;
+  forEachDiagnostic(state, (_, from, to) => {
+    if (pos >= from && pos <= to && (from === to || ((pos > from || side > 0) && (pos < to || side < 0)))) found = true;
+  });
+  return found;
+}
+
 export const lispHover = hoverTooltip(
-  async (view, pos): Promise<Tooltip | null> => {
-    // K's box already shows a doc.
-    if (view.state.field(docTip, false)) return null;
+  async (view, pos, side): Promise<Tooltip | null> => {
+    // K's box already shows a doc, and a warning's box says what matters more.
+    if (view.state.field(docTip, false) || hoversDiagnostic(view.state, pos, side)) return null;
     const text = view.state.doc.toString();
     if (!isSymbolChar(text[pos] ?? "") && !isSymbolChar(text[pos - 1] ?? "")) return null;
     const node = formAt(parse(text), pos);

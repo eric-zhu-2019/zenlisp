@@ -2955,8 +2955,62 @@ button.image-chip:hover {
   -webkit-user-select: text;
   cursor: text;
 }
-.cm-tooltip-lint .cm-diagnosticAction {
+.cm-editor .cm-tooltip-lint {
+  max-width: 560px;
+}
+.cm-editor .cm-tooltip-lint .cm-diagnostic {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 12px 8px 14px;
+  border-left: none;
+  background: var(--bg-input);
+  box-shadow: inset 3px 0 0 var(--diagnostic-color, var(--text-faint));
+}
+.cm-editor .cm-tooltip-lint .cm-diagnostic + .cm-diagnostic {
+  border-top: 1px solid var(--border);
+}
+.cm-editor .cm-tooltip-lint .cm-diagnostic-error {
+  --diagnostic-color: var(--danger);
+}
+.cm-editor .cm-tooltip-lint .cm-diagnostic-warning {
+  --diagnostic-color: var(--warning);
+}
+.cm-editor .cm-tooltip-lint .cm-diagnosticText {
+  flex: 1 0 100%;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.cm-editor .cm-tooltip-lint .cm-diagnosticSource {
+  order: 1;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--diagnostic-color, var(--text-faint));
+  opacity: 1;
+}
+.cm-editor .cm-tooltip-lint .cm-diagnosticAction {
+  order: 2;
+  margin: 0;
+  padding: 2px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 11.5px;
   cursor: default;
+}
+.cm-editor .cm-tooltip-lint .cm-diagnosticAction:first-of-type {
+  margin-left: auto;
+}
+.cm-editor .cm-tooltip-lint .cm-diagnosticAction:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 .tab-lock {
   display: inline-flex;

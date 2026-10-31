@@ -32,7 +32,10 @@ function tooltipAt(state: EditorState): { tooltip: Tooltip | null; key: string }
       for (const d of found) {
         const li = document.createElement("li");
         li.className = `cm-diagnostic cm-diagnostic-${d.severity}`;
-        li.textContent = d.message;
+        const text = document.createElement("span");
+        text.className = "cm-diagnosticText";
+        text.textContent = d.message;
+        li.appendChild(text);
         if (d.source) {
           const source = document.createElement("div");
           source.className = "cm-diagnosticSource";
